@@ -85,7 +85,7 @@
 </head>
 <body>
   <nav>
-    <h1>âš¡ FastChannels</h1>
+    <h1>⚡ FastChannels</h1>
     <a href="/admin/">Dashboard</a>
     <a href="/admin/sources">Sources</a>
     <a href="/admin/channels">Channels</a>
@@ -115,7 +115,7 @@
       <div class="stat-card"><div class="value">{{ sources|length }}</div><div class="label">Sources</div></div>
       <div class="stat-card"><div class="value">{{ feeds|length }}</div><div class="label">Output Feeds</div></div>
       <div class="stat-card clickable" onclick="openCommunityMap()" id="cm-stat-card" title="Open Community Gracenote Map">
-        <div class="value" id="cm-stat-value" style="font-size:1.5rem;color:var(--accent-soft)">â€¦</div>
+        <div class="value" id="cm-stat-value" style="font-size:1.5rem;color:var(--accent-soft)">…</div>
         <div class="label">Community IDs Available</div>
         <div class="sub-label" id="cm-stat-sub"></div>
       </div>
@@ -143,7 +143,7 @@
             </td>
             <td>
               {{ feed.channel_count() }}
-              {% if feed.channel_count() > 750 %}<span class="warn">âš </span>{% endif %}
+              {% if feed.channel_count() > 750 %}<span class="warn">⚠</span>{% endif %}
             </td>
           </tr>
           {% endfor %}
@@ -173,7 +173,7 @@
             <td><span class="badge {% if source.is_enabled %}badge-green{% else %}badge-red{% endif %}">{% if source.is_enabled %}Enabled{% else %}Disabled{% endif %}</span></td>
             <td>
               {{ source_output_meta[source.id].channel_count }}
-              {% if source_output_meta[source.id].channel_count > 750 %}<span class="warn">âš </span>{% endif %}
+              {% if source_output_meta[source.id].channel_count > 750 %}<span class="warn">⚠</span>{% endif %}
             </td>
             <td style="color:var(--text-muted)" id="last-scraped-{{ source.id }}">{{ source.last_scraped_at | localtime }}</td>
             {% set nxt = source.next_scrape_at() %}
@@ -199,8 +199,8 @@
     const APP_TIME_ZONE = {{ app_timezone_name|tojson }};
     const _pollTimers  = {};
     const _scrapeBtn   = {};
-    const _scrapeStart = {};  // sourceId â†’ ms timestamp when scrape was triggered
-    const _phaseLabel  = { bootstrap:'Authenticatingâ€¦', channels:'Fetching channelsâ€¦', starting:'Startingâ€¦' };
+    const _scrapeStart = {};  // sourceId → ms timestamp when scrape was triggered
+    const _phaseLabel  = { bootstrap:'Authenticating…', channels:'Fetching channels…', starting:'Starting…' };
 
     function _formatAppTime(value) {
       if (!value) return '';
@@ -224,9 +224,9 @@
           const pct = Math.round(data.done / data.total * 100);
           return { cls:'status-running', text:`EPG ${data.done} / ${data.total} (${pct}%)` };
         }
-        return { cls:'status-running', text:_phaseLabel[data.phase] || 'Runningâ€¦' };
+        return { cls:'status-running', text:_phaseLabel[data.phase] || 'Running…' };
       }
-      return { cls:'status-running', text:'Runningâ€¦' };
+      return { cls:'status-running', text:'Running…' };
     }
 
     function _renderStatus(sourceId, data) {
@@ -249,11 +249,11 @@
       if (!el) return;
       if (lastError) {
         el.className = 'scrape-status';
-        el.innerHTML = `<span class="status-text" style="color:var(--danger)">âš  ${lastError}</span>`;
+        el.innerHTML = `<span class="status-text" style="color:var(--danger)">⚠ ${lastError}</span>`;
         setTimeout(() => { el.innerHTML = ''; el.className = 'scrape-status'; }, 12000);
       } else {
         el.className = 'scrape-status';
-        el.innerHTML = '<span class="status-text" style="color:var(--success)">âœ“ Complete</span>';
+        el.innerHTML = '<span class="status-text" style="color:var(--success)">✓ Complete</span>';
         setTimeout(() => { el.innerHTML = ''; el.className = 'scrape-status'; }, 8000);
       }
     }
@@ -269,7 +269,7 @@
             _renderStatus(sourceId, d);
             _pollTimers[sourceId] = setTimeout(poll, 2000);
           } else {
-            // idle â€” check if last_scraped_at is newer than when we triggered the scrape
+            // idle — check if last_scraped_at is newer than when we triggered the scrape
             const scraped = d.last_scraped_ms || 0;
             const start   = _scrapeStart[sourceId] || 0;
             if (scraped > start) {
@@ -277,11 +277,11 @@
               delete _pollTimers[sourceId];
               _showResult(sourceId, d.last_error || null, scraped);
             } else if (Date.now() - start < 30000) {
-              // job hasn't completed yet â€” keep waiting (up to 30s)
+              // job hasn't completed yet — keep waiting (up to 30s)
               _renderStatus(sourceId, d);
               _pollTimers[sourceId] = setTimeout(poll, 2000);
             } else {
-              // 30s elapsed, still no update â€” give up
+              // 30s elapsed, still no update — give up
               delete _pollTimers[sourceId];
               _showResult(sourceId, null);
             }
@@ -302,10 +302,10 @@
         const valEl = document.getElementById('cm-stat-value');
         const subEl = document.getElementById('cm-stat-sub');
         if (d.available === 0 && d.total === 0) {
-          valEl.textContent = 'â€”';
+          valEl.textContent = '—';
           subEl.textContent = 'No community mappings found';
         } else if (d.available === 0) {
-          valEl.textContent = 'âœ“';
+          valEl.textContent = '✓';
           valEl.style.color = 'var(--success)';
           subEl.textContent = `All ${d.total} applied`;
         } else {
@@ -319,12 +319,12 @@
 
     async function run(id, btn) {
       if (_pollTimers[id]) return;
-      btn.disabled = true; btn.textContent = 'Queuedâ€¦';
+      btn.disabled = true; btn.textContent = 'Queued…';
       try {
         const r = await fetch(`/api/sources/${id}/run`, {method:'POST'});
         const d = await r.json();
         if (d.status === 'queued') {
-          btn.textContent = 'Runningâ€¦';
+          btn.textContent = 'Running…';
           _scrapeStart[id] = Date.now();
           _startPolling(id, btn);
         } else {

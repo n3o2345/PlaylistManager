@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Settings â€” FastChannels</title>
+  <title>Settings — FastChannels</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -15,7 +15,7 @@
       min-height: 100vh;
     }
 
-    /* â”€â”€ Nav â”€â”€ */
+    /* ── Nav ── */
     nav {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
@@ -31,12 +31,12 @@
     nav a { color: var(--text-soft); text-decoration: none; font-size: 0.9rem; }
     nav a:hover, nav a.active { color: var(--text); }
 
-    /* â”€â”€ Layout â”€â”€ */
+    /* ── Layout ── */
     .page { max-width: 860px; margin: 0 auto; padding: 2.5rem 1.5rem; }
     h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.4rem; }
     .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 2rem; }
 
-    /* â”€â”€ Source cards â”€â”€ */
+    /* ── Source cards ── */
     .source-card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -84,7 +84,7 @@
     .chevron { color: var(--text-dim); transition: transform 0.2s; font-size: 0.8rem; }
     .chevron.open { transform: rotate(180deg); }
 
-    /* â”€â”€ Form body â”€â”€ */
+    /* ── Form body ── */
     .source-body {
       display: none;
       padding: 0 1.4rem 1.4rem;
@@ -203,7 +203,7 @@
     }
     .advanced-chevron.open { transform: rotate(180deg); }
 
-    /* â”€â”€ Toggle row (checkbox settings) â”€â”€ */
+    /* ── Toggle row (checkbox settings) ── */
     .toggle-row {
       display: flex;
       align-items: flex-start;
@@ -265,7 +265,7 @@
     }
     .btn-audit:hover { background: var(--info); }
 
-    /* â”€â”€ Timezone combobox â”€â”€ */
+    /* ── Timezone combobox ── */
     .tz-combobox { position: relative; }
     .tz-combobox input[type=text] {
       width: 100%;
@@ -332,7 +332,7 @@
     .save-status.ok    { color: var(--success-soft); }
     .save-status.error { color: var(--danger); }
 
-    /* â”€â”€ Stats card â”€â”€ */
+    /* ── Stats card ── */
     .stats-card {
       background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
       padding: 1.4rem; margin-bottom: 1.5rem;
@@ -356,7 +356,7 @@
     .stats-uptime { font-size: 0.78rem; color: var(--text-dim); margin-top: 0.75rem; }
     .stats-loading { color: var(--text-dim); font-size: 0.85rem; }
 
-    /* â”€â”€ Loading / empty states â”€â”€ */
+    /* ── Loading / empty states ── */
     .loading { text-align: center; padding: 3rem; color: var(--text-dim); }
     .error-msg { color: var(--danger); padding: 1rem; }
     .needs-config-banner {
@@ -386,7 +386,7 @@
 <body>
 
   <nav>
-    <h1>âš¡ FastChannels</h1>
+    <h1>⚡ FastChannels</h1>
     <a href="/admin/">Dashboard</a>
     <a href="/admin/sources">Sources</a>
     <a href="/admin/channels">Channels</a>
@@ -404,12 +404,12 @@
 
   {% if settings_needs_config %}
   <div class="needs-config-banner" id="settings-needs-config-banner">
-    <strong>âš  {{ settings_needs_config | length }} setting{{ 's' if settings_needs_config | length != 1 else '' }} should be configured on new installs</strong>
+    <strong>⚠ {{ settings_needs_config | length }} setting{{ 's' if settings_needs_config | length != 1 else '' }} should be configured on new installs</strong>
     <ul id="settings-needs-config-list">
       {% for item in settings_needs_config %}
       <li id="settings-needs-config-item-{{ item.key }}">
         <a href="#{{ item.anchor }}" onclick="scrollToSettingCard('{{ item.anchor }}'); return false;">{{ item.label }}</a>
-        â€” click to configure
+        — click to configure
       </li>
       {% endfor %}
     </ul>
@@ -420,7 +420,7 @@
   <div class="source-card" id="settings-card-public-base-url">
     <div class="source-header" style="cursor:default">
       <div class="source-title">
-        <div class="source-icon">ðŸŒ</div>
+        <div class="source-icon">🌐</div>
         <div>
           <div class="source-name">FastChannels Server URL</div>
           <div class="source-meta">Set the address players and other devices should use to reach this server</div>
@@ -457,7 +457,7 @@
   <div class="source-card" id="settings-card-channels-dvr">
     <div class="source-header" style="cursor:default">
       <div class="source-title">
-        <div class="source-icon">ðŸ“º</div>
+        <div class="source-icon">📺</div>
         <div>
           <div class="source-name">Channels DVR</div>
           <div class="source-meta">Register feeds as custom M3U sources in your DVR with one click</div>
@@ -470,7 +470,7 @@
           <label for="channels-dvr-url">Channels DVR Server URL</label>
           <input type="url" id="channels-dvr-url"
                  placeholder="http://192.168.1.x:8089" value="{{ channels_dvr_url }}">
-          <div class="help">Base URL of your Channels DVR server (port 8089). Find it in Channels DVR â†’ Settings â†’ About.</div>
+          <div class="help">Base URL of your Channels DVR server (port 8089). Find it in Channels DVR → Settings → About.</div>
           {% if channels_dvr_url_from_env %}
           <div class="help">Currently coming from environment variable <code>CHANNELS_DVR_SERVER_URL</code>. Saving here will override it in the database.</div>
           {% endif %}
@@ -500,7 +500,7 @@
   <div class="source-card" id="settings-card-timezone">
     <div class="source-header" style="cursor:default">
       <div class="source-title">
-        <div class="source-icon">ðŸ•’</div>
+        <div class="source-icon">🕒</div>
         <div>
           <div class="source-name">Time Zone</div>
           <div class="source-meta">Control how timestamps display across the admin UI and FastChannels logs</div>
@@ -513,7 +513,7 @@
           <label for="tz-input">Time Zone</label>
           <div class="tz-combobox" id="tz-combobox">
             <input type="text" id="tz-input" autocomplete="off"
-                   placeholder="Type to searchâ€¦ e.g. Eastern, Chicago, London"
+                   placeholder="Type to search… e.g. Eastern, Chicago, London"
                    value="{{ timezone_name }}">
             <div class="tz-dropdown" id="tz-dropdown" hidden></div>
           </div>
@@ -534,7 +534,7 @@
   <div class="source-card">
     <div class="source-header" style="cursor:default">
       <div class="source-title">
-        <div class="source-icon">ðŸ’¾</div>
+        <div class="source-icon">💾</div>
         <div>
           <div class="source-name">Database Backup</div>
           <div class="source-meta">Download a snapshot of your FastChannels database</div>
@@ -543,7 +543,7 @@
     </div>
     <div class="source-body open">
       <div class="toggle-row-help" style="max-width:640px;margin-top:0.75rem;margin-bottom:0.75rem">
-        Downloads a gzip-compressed copy of <code style="color:var(--accent-soft);font-family:ui-monospace,monospace">fastchannels.db</code> â€” includes all channels, sources, feeds, settings, and Gracenote assignments.
+        Downloads a gzip-compressed copy of <code style="color:var(--accent-soft);font-family:ui-monospace,monospace">fastchannels.db</code> — includes all channels, sources, feeds, settings, and Gracenote assignments.
         Store it somewhere safe. To restore, decompress the file and replace <code style="color:var(--accent-soft);font-family:ui-monospace,monospace">/data/fastchannels.db</code> with it, then restart the container.
       </div>
       <a class="btn btn-audit" href="/api/settings/backup-db" download>Download DB Backup</a>
@@ -554,7 +554,7 @@
   <div class="source-card">
     <div class="source-header" style="cursor:default">
       <div class="source-title">
-        <div class="source-icon">ðŸ–¼ï¸</div>
+        <div class="source-icon">🖼️</div>
         <div>
           <div class="source-name">Image Proxy &amp; Caching</div>
           <div class="source-meta">Control whether logos and program artwork are served through FastChannels</div>
@@ -565,7 +565,7 @@
       <div class="toggle-row">
         <div class="toggle-row-text">
           <div class="toggle-row-label">Enable image proxy &amp; caching</div>
-          <div class="toggle-row-help">When enabled, channel logos and program artwork are cached and served through FastChannels â€” ensuring consistent delivery regardless of upstream CDN availability. When disabled, all image URLs point directly to the upstream provider. Note: some sources (e.g. Roku) require proxying for program artwork to display correctly; disabling this may cause missing artwork for those channels.</div>
+          <div class="toggle-row-help">When enabled, channel logos and program artwork are cached and served through FastChannels — ensuring consistent delivery regardless of upstream CDN availability. When disabled, all image URLs point directly to the upstream provider. Note: some sources (e.g. Roku) require proxying for program artwork to display correctly; disabling this may cause missing artwork for those channels.</div>
         </div>
         <div class="toggle-row-control">
           <label class="toggle-switch">
@@ -583,7 +583,7 @@
   <div class="source-card">
     <div class="source-header" style="cursor:default">
       <div class="source-title">
-        <div class="source-icon">ðŸŽ¬</div>
+        <div class="source-icon">🎬</div>
         <div>
           <div class="source-name">Gracenote Guide Data</div>
           <div class="source-meta">Control automatic guide ID assignment during scraping</div>
@@ -624,7 +624,7 @@
       <div class="toggle-row" id="gn-contribution-row">
         <div class="toggle-row-text">
           <div class="toggle-row-label">Contribution Webhook URL</div>
-          <div class="toggle-row-help">Where user contributions are sent when they click Contribute in the Community Map. Defaults to the FastChannels community webhook â€” leave blank to use the default.</div>
+          <div class="toggle-row-help">Where user contributions are sent when they click Contribute in the Community Map. Defaults to the FastChannels community webhook — leave blank to use the default.</div>
           <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
             <input type="url" id="gn-contribution-url" style="flex:1;min-width:260px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82rem;padding:0.35rem 0.6rem" placeholder="Default Make.com webhook (leave blank to use default)" value="{{ gracenote_contribution_url }}">
             <button class="btn btn-secondary" onclick="saveContributionUrl()">Save URL</button>
@@ -658,8 +658,8 @@
 
   <!-- System Stats card -->
   <div class="stats-card">
-    <div class="stats-card-title">ðŸ“Š System Stats</div>
-    <div id="system-stats-body"><span class="stats-loading">Loadingâ€¦</span></div>
+    <div class="stats-card-title">📊 System Stats</div>
+    <div id="system-stats-body"><span class="stats-loading">Loading…</span></div>
   </div>
 
 </div>
@@ -698,14 +698,14 @@ function refreshSettingsNeedsConfigBanner() {
 
   const strong = banner.querySelector('strong');
   if (strong) {
-    strong.textContent = `âš  ${remaining} setting${remaining === 1 ? '' : 's'} should be configured on new installs`;
+    strong.textContent = `⚠ ${remaining} setting${remaining === 1 ? '' : 's'} should be configured on new installs`;
   }
 }
 
 async function saveSettings(body, statusId) {
   const status = document.getElementById(statusId);
   status.className = 'save-status';
-  status.textContent = 'Savingâ€¦';
+  status.textContent = 'Saving…';
   try {
     const r = await fetch('/api/settings', {
       method:  'POST',
@@ -716,12 +716,12 @@ async function saveSettings(body, statusId) {
     try { payload = await r.json(); } catch (_) {}
     if (!r.ok) throw new Error(payload?.error || `HTTP ${r.status}`);
     status.className = 'save-status ok';
-    status.textContent = 'âœ“ Saved';
+    status.textContent = '✓ Saved';
     setTimeout(() => { status.textContent = ''; }, 2500);
     return true;
   } catch (e) {
     status.className = 'save-status error';
-    status.textContent = 'âœ• ' + e.message;
+    status.textContent = '✕ ' + e.message;
     return false;
   }
 }
@@ -761,7 +761,7 @@ async function saveTimezoneSettings() {
   }
 }
 
-// â”€â”€ Timezone searchable combobox â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Timezone searchable combobox ───────────────────────────────────────────
 (function () {
   const TZ_LIST = {{ timezone_choices | tojson }};
 
@@ -859,13 +859,13 @@ async function saveTimezoneSettings() {
   });
 })();
 
-// â”€â”€ Gracenote auto-fill toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Gracenote auto-fill toggle ─────────────────────────────────────────────
 function onGracenoteAutoFillChange(checkbox) {
   if (checkbox.checked) {
-    // Turning ON â€” just save immediately
+    // Turning ON — just save immediately
     saveSettings({ gracenote_auto_fill: true }, 'gracenote-auto-fill-status');
   } else {
-    // Turning OFF â€” show confirmation before doing anything
+    // Turning OFF — show confirmation before doing anything
     checkbox.checked = true; // revert visually until user confirms
     document.getElementById('gracenote-clear-modal').classList.add('open');
   }
@@ -875,17 +875,17 @@ async function disableAndClearGracenote() {
   document.getElementById('gracenote-clear-modal').classList.remove('open');
   const status = document.getElementById('gracenote-auto-fill-status');
   status.className = 'save-status';
-  status.textContent = 'Clearingâ€¦';
+  status.textContent = 'Clearing…';
   try {
     const r = await fetch('/api/settings/gracenote-auto-clear', { method: 'POST' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     document.getElementById('gracenote-auto-fill-toggle').checked = false;
     status.className = 'save-status ok';
-    status.textContent = 'âœ“ Disabled â€” IDs being cleared in background';
+    status.textContent = '✓ Disabled — IDs being cleared in background';
     setTimeout(() => { status.textContent = ''; }, 4000);
   } catch (e) {
     status.className = 'save-status error';
-    status.textContent = 'âœ• ' + e.message;
+    status.textContent = '✕ ' + e.message;
   }
 }
 
@@ -901,7 +901,7 @@ function cancelGracenoteClear() {
 }
 
 
-// â”€â”€ System Stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── System Stats ──────────────────────────────────────────────────────────
 function _fmt_bytes(b) {
   if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
   if (b >= 1048576)    return (b / 1048576).toFixed(1) + ' MB';
@@ -994,7 +994,7 @@ async function loadSystemStats() {
 async function saveContributionUrl() {
   const url = document.getElementById('gn-contribution-url').value.trim();
   const st = document.getElementById('gn-contribution-status');
-  st.textContent = 'Savingâ€¦'; st.className = 'save-status';
+  st.textContent = 'Saving…'; st.className = 'save-status';
   try {
     await fetch('/api/settings', { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({gracenote_contribution_url: url}) });
     st.textContent = 'Saved'; st.className = 'save-status saved';
@@ -1004,7 +1004,7 @@ async function saveContributionUrl() {
 
 loadSystemStats();
 
-// â”€â”€ Community Gracenote map remote status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Community Gracenote map remote status ───────────────────────────────────
 async function loadRemoteGracenoteStatus() {
   try {
     const r = await fetch('/api/gracenote/remote-map/status');
@@ -1016,7 +1016,7 @@ async function loadRemoteGracenoteStatus() {
     if (meta) {
       const ts = d.fetched_at ? new Date(d.fetched_at * 1000).toLocaleString() : null;
       const count = d.row_count ? `${d.row_count.toLocaleString()} rows` : 'not yet fetched';
-      const last = ts ? ` Â· Last fetched ${ts}` : '';
+      const last = ts ? ` · Last fetched ${ts}` : '';
       meta.textContent = `${count}${last}`;
     }
   } catch(e) { /* silently ignore */ }
@@ -1025,7 +1025,7 @@ async function loadRemoteGracenoteStatus() {
 async function saveGracenoteMapUrl() {
   const url = (document.getElementById('gn-map-url')?.value || '').trim();
   const status = document.getElementById('gn-remote-status');
-  status.className = 'save-status'; status.textContent = 'Savingâ€¦';
+  status.className = 'save-status'; status.textContent = 'Saving…';
   try {
     const r = await fetch('/api/settings', {
       method: 'POST',
@@ -1033,18 +1033,18 @@ async function saveGracenoteMapUrl() {
       body: JSON.stringify({ gracenote_map_url: url }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    status.className = 'save-status ok'; status.textContent = 'âœ“ Saved';
+    status.className = 'save-status ok'; status.textContent = '✓ Saved';
     setTimeout(() => { status.textContent = ''; }, 3000);
     loadRemoteGracenoteStatus();
   } catch(e) {
-    status.className = 'save-status error'; status.textContent = 'âœ• ' + e.message;
+    status.className = 'save-status error'; status.textContent = '✕ ' + e.message;
   }
 }
 
 async function refreshRemoteGracenoteMap() {
   const btn = document.getElementById('gn-remote-refresh-btn');
   const status = document.getElementById('gn-remote-status');
-  if (btn) { btn.disabled = true; btn.textContent = 'Fetchingâ€¦'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
   status.className = 'save-status';
   status.textContent = '';
   try {
@@ -1052,11 +1052,11 @@ async function refreshRemoteGracenoteMap() {
     const d = await r.json();
     if (!d.ok) throw new Error(d.message || `HTTP ${r.status}`);
     status.className = 'save-status ok';
-    status.textContent = 'âœ“ ' + d.message;
+    status.textContent = '✓ ' + d.message;
     loadRemoteGracenoteStatus();
   } catch(e) {
     status.className = 'save-status error';
-    status.textContent = 'âœ• ' + e.message;
+    status.textContent = '✕ ' + e.message;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Refresh Now'; }
     setTimeout(() => { status.textContent = ''; }, 5000);

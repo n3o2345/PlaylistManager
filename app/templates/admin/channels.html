@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Channels â€” FastChannels</title>
+  <title>Channels — FastChannels</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -344,7 +344,7 @@
     .modal-box h2 { margin: 0 0 0.25rem; font-size: 1.1rem; color: var(--text-strong); }
     .modal-box .modal-sub { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 1.25rem; }
     .modal-box .modal-loading { color: var(--text-muted); text-align: center; padding: 2rem 0; }
-    /* Duplicate finder modal â€” legacy (used by mark-dup modal) */
+    /* Duplicate finder modal — legacy (used by mark-dup modal) */
     .dup-finder-subject {
       display: flex; align-items: center; gap: 0.6rem;
       padding: 0.6rem 0.75rem; margin-bottom: 1rem;
@@ -743,7 +743,7 @@
       width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent);
     }
 
-    /* â”€â”€ Channel number pin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── Channel number pin ─────────────────────────────────────────────── */
     .chnum-cell { white-space: nowrap; }
     .chnum-cell .chnum-display { cursor: pointer; color: var(--text-muted); }
     .chnum-cell .chnum-display:hover { color: var(--text); text-decoration: underline dotted; }
@@ -753,7 +753,7 @@
     .chnum-pin-btn:hover { opacity: 1; }
     .chnum-input { width: 54px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; font-size: inherit; }
 
-    /* â”€â”€ Gracenote ID input â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* ── Gracenote ID input ─────────────────────────────────────────────── */
     .gn-cell { min-width: 76px; }
 
     .gn-wrap {
@@ -908,7 +908,7 @@
     }
     .gs-open-btn:hover { border-color: var(--accent-soft); background: var(--accent-bg); color: #fff; }
     .gs-open-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    /* GS modal: scroll on the overlay (not the inner box) â€” reliable on iOS */
+    /* GS modal: scroll on the overlay (not the inner box) — reliable on iOS */
     #gs-suggest-modal {
       overflow-y: auto; align-items: flex-start;
       padding: 1.5rem 1rem;
@@ -1152,7 +1152,7 @@
 <body>
   <div id="bulk-toast"></div>
   <script>
-    // Server-rendered filter state â€” always matches the current page view.
+    // Server-rendered filter state — always matches the current page view.
     const _pageFilters = {
       feed:       {{ feed_filter      | tojson }},
       source:     {{ source_filter    | tojson }},
@@ -1174,7 +1174,7 @@
     const FEEDS = [{% for f in feeds %}{% if f.is_enabled and f.slug != 'default' %}{"id":{{ f.id }},"name":{{ f.name | tojson }},"pinned":{{ (f.filters or {}).get('pinned_channel_ids', []) | tojson }}},{% endif %}{% endfor %}];
   </script>
   <nav>
-    <h1>âš¡ FastChannels</h1>
+    <h1>⚡ FastChannels</h1>
     <a href="/admin/">Dashboard</a>
     <a href="/admin/sources">Sources</a>
     <a href="/admin/channels" class="active">Channels</a>
@@ -1191,7 +1191,7 @@
       <div class="toolbar-primary">
         <div class="filter-group">
           <label class="filter-label" for="channel-search">Search</label>
-          <input id="channel-search" name="search" placeholder="Channel name containsâ€¦" value="{{ search }}">
+          <input id="channel-search" name="search" placeholder="Channel name contains…" value="{{ search }}">
         </div>
         <div class="filter-group">
           <label class="filter-label" for="source-filter">Source</label>
@@ -1205,7 +1205,7 @@
         <div class="filter-actions">
           <button type="submit" class="btn-apply">Apply</button>
           <a class="clear" href="/admin/channels">Clear</a>
-          <button type="button" class="btn-resolve-dupes" onclick="openResolveDupesModal()">âš¡ Resolve Dupes</button>
+          <button type="button" class="btn-resolve-dupes" onclick="openResolveDupesModal()">⚡ Resolve Dupes</button>
         </div>
       </div>
       <details class="toolbar-advanced" {% if feed_filter or category_filter or enabled_filter or presence_filter or drm_filter or language_filter or country_filter or gracenote_filter or gracenote_mode_filter or duplicates_filter or new_filter or epg_filter or resolution_filter %}open{% endif %}>
@@ -1252,8 +1252,8 @@
             <label class="filter-label" for="drm-filter">Stream Health</label>
             <select id="drm-filter" name="drm">
               <option value="">All stream states</option>
-              <option value="1" {% if drm_filter == '1' %}selected{% endif %}>ðŸ”’ DRM only</option>
-              <option value="dead" {% if drm_filter == 'dead' %}selected{% endif %}>ðŸ’€ Dead only</option>
+              <option value="1" {% if drm_filter == '1' %}selected{% endif %}>🔒 DRM only</option>
+              <option value="dead" {% if drm_filter == 'dead' %}selected{% endif %}>💀 Dead only</option>
               <option value="0" {% if drm_filter == '0' %}selected{% endif %}>No DRM / Dead flag</option>
             </select>
           </div>
@@ -1298,8 +1298,8 @@
             <label class="filter-label" for="duplicates-filter">Duplicates</label>
             <select id="duplicates-filter" name="duplicates">
               <option value="">Normal list</option>
-              <option value="1" {% if duplicates_filter == '1' %}selected{% endif %}>âš  Duplicates only</option>
-              <option value="unique" {% if duplicates_filter == 'unique' %}selected{% endif %}>âœ“ Unique only</option>
+              <option value="1" {% if duplicates_filter == '1' %}selected{% endif %}>⚠ Duplicates only</option>
+              <option value="unique" {% if duplicates_filter == 'unique' %}selected{% endif %}>✓ Unique only</option>
             </select>
           </div>
           <div class="filter-group">
@@ -1323,8 +1323,8 @@
             <label class="filter-label" for="resolution-filter">Resolution</label>
             <select id="resolution-filter" name="resolution">
               <option value="">All</option>
-              <option value="4k"   {% if resolution_filter == '4k'   %}selected{% endif %}>4K (â‰¥2160p)</option>
-              <option value="hd"   {% if resolution_filter == 'hd'   %}selected{% endif %}>HD (â‰¥720p)</option>
+              <option value="4k"   {% if resolution_filter == '4k'   %}selected{% endif %}>4K (≥2160p)</option>
+              <option value="hd"   {% if resolution_filter == 'hd'   %}selected{% endif %}>HD (≥720p)</option>
               <option value="sd"   {% if resolution_filter == 'sd'   %}selected{% endif %}>SD (&lt;720p)</option>
               <option value="hevc" {% if resolution_filter == 'hevc' %}selected{% endif %}>HEVC only</option>
               <option value="known" {% if resolution_filter == 'known' %}selected{% endif %}>Stream info present</option>
@@ -1385,9 +1385,9 @@
       {% if not (search or source_filter or feed_filter or category_filter or enabled_filter or presence_filter or drm_filter or language_filter or country_filter or gracenote_filter or gracenote_mode_filter or duplicates_filter in ('1', 'unique') or new_filter in ('3','7','14') or epg_filter) %}
       <span class="filter-chip"><strong>View</strong>All channels</span>
       {% endif %}
-      <button type="button" class="btn-hide-disabled{% if enabled_filter == '1' %} active{% endif %}" onclick="toggleHideDisabled()">{% if enabled_filter == '1' %}â—‰ Hiding disabled{% else %}â—‹ Hide disabled{% endif %}</button>
-      <button type="button" class="btn-hide-disabled{% if presence_filter == 'enabled_inactive' %} active{% endif %}" onclick="togglePresence('enabled_inactive')">{% if presence_filter == 'enabled_inactive' %}â—‰ Enabled + inactive{% else %}â—‹ Enabled + inactive{% endif %}</button>
-      <button type="button" class="btn-hide-disabled{% if presence_filter == 'missed' %} active{% endif %}" onclick="togglePresence('missed')">{% if presence_filter == 'missed' %}â—‰ Missed recently{% else %}â—‹ Missed recently{% endif %}</button>
+      <button type="button" class="btn-hide-disabled{% if enabled_filter == '1' %} active{% endif %}" onclick="toggleHideDisabled()">{% if enabled_filter == '1' %}◉ Hiding disabled{% else %}○ Hide disabled{% endif %}</button>
+      <button type="button" class="btn-hide-disabled{% if presence_filter == 'enabled_inactive' %} active{% endif %}" onclick="togglePresence('enabled_inactive')">{% if presence_filter == 'enabled_inactive' %}◉ Enabled + inactive{% else %}○ Enabled + inactive{% endif %}</button>
+      <button type="button" class="btn-hide-disabled{% if presence_filter == 'missed' %} active{% endif %}" onclick="togglePresence('missed')">{% if presence_filter == 'missed' %}◉ Missed recently{% else %}○ Missed recently{% endif %}</button>
     </div>
 
     <!-- Bulk action bar (shown when rows selected) -->
@@ -1416,13 +1416,13 @@
             <th class="check-col"><input type="checkbox" id="select-all" onchange="toggleAll(this)"></th>
             <th>Logo</th>
             <th class="sortable {% if sort_by == 'name' %}active{% endif %}" onclick="sortBy('name')">
-              Name <span class="sort-arrow">{% if sort_by == 'name' %}{{ 'â–²' if sort_dir == 'asc' else 'â–¼' }}{% else %}â‡…{% endif %}</span>
+              Name <span class="sort-arrow">{% if sort_by == 'name' %}{{ '▲' if sort_dir == 'asc' else '▼' }}{% else %}⇅{% endif %}</span>
             </th>
             <th style="width:1px;white-space:nowrap">
               <select class="col-filter-select{% if duplicates_filter %} col-filter-active{% endif %}" onchange="filterBy('duplicates', this.value)" title="Filter by duplicate status">
                 <option value="">DUP</option>
-                <option value="1" {% if duplicates_filter == '1' %}selected{% endif %}>âš  Dupes</option>
-                <option value="unique" {% if duplicates_filter == 'unique' %}selected{% endif %}>âœ“ Unique</option>
+                <option value="1" {% if duplicates_filter == '1' %}selected{% endif %}>⚠ Dupes</option>
+                <option value="unique" {% if duplicates_filter == 'unique' %}selected{% endif %}>✓ Unique</option>
               </select>
             </th>
             <th>
@@ -1460,7 +1460,7 @@
               </select>
             </th>
             <th>Region</th>
-            <th class="sortable {% if sort_by == 'number' %}active{% endif %}" onclick="sortBy('number')" title="Actual tvg-chno from the Default feed">Ch# <span class="sort-arrow">{% if sort_by == 'number' %}{{ 'â–²' if sort_dir == 'asc' else 'â–¼' }}{% else %}â‡…{% endif %}</span></th>
+            <th class="sortable {% if sort_by == 'number' %}active{% endif %}" onclick="sortBy('number')" title="Actual tvg-chno from the Default feed">Ch# <span class="sort-arrow">{% if sort_by == 'number' %}{{ '▲' if sort_dir == 'asc' else '▼' }}{% else %}⇅{% endif %}</span></th>
             <th>Gracenote ID</th>
             <th class="actions-col">Actions</th>
             <th class="toggle-col">Enabled</th>
@@ -1486,7 +1486,7 @@
                 <div class="logo"></div>
                 {% endif %}
                 {% if ch.logo_url_pinned %}
-                <span class="logo-pin-badge" title="Logo pinned by user">ðŸ“Œ</span>
+                <span class="logo-pin-badge" title="Logo pinned by user">📌</span>
                 {% endif %}
               </span>
             </td>
@@ -1500,33 +1500,33 @@
             {% if ch.last_seen_at %}
               {% set _ = hover_parts.append('Last seen: ' ~ (ch.last_seen_at | localtime)) %}
             {% endif %}
-            <td title="{{ hover_parts|join(' Â· ') if hover_parts else '' }}"><strong>{{ ch.name }}</strong></td>
-            <td style="white-space:nowrap;padding-left:0.25rem;padding-right:0.25rem">{% if ch.name in duplicate_names %}<span class="dup-badge badge-dup-clickable" data-channel-id="{{ ch.id }}" style="cursor:pointer" title="Duplicate match found â€” click to see matches">DUP</span>{% elif ch.name in possible_duplicate_names %}<span class="dup-badge badge-dup-clickable" data-channel-id="{{ ch.id }}" style="cursor:pointer" title="Possible duplicate â€” click to see matches">DUP?</span>{% elif ch.id in gn_duplicate_ids %}<span class="dup-badge badge-dup-clickable" data-channel-id="{{ ch.id }}" style="cursor:pointer" title="Same Gracenote ID found on another source â€” click to see matches">GN DUP</span>{% endif %}{% if ch.is_duplicate %}<span class="badge-manual-dup badge-dup-clickable" data-channel-id="{{ ch.id }}" title="Click to see potential duplicates" style="cursor:pointer">DUPL</span>{% endif %}</td>
-            <td style="color:var(--text-muted)">{{ ch.source.display_name }}{% if ch.source.epg_only %} <span class="badge-epg-only" title="Source is EPG-only â€” excluded from M3U output">EPG</span>{% endif %}</td>
-            <td style="white-space:nowrap;padding-left:0.25rem;padding-right:0.25rem">{% if ch.stream_info %}{% if ch.stream_info.has_4k %}<span class="badge-4k" title="4K stream ({{ ch.stream_info.max_resolution }})">4K</span>{% elif ch.stream_info.has_hd %}<span class="badge-hd" title="HD stream ({{ ch.stream_info.max_resolution }})">HD</span>{% endif %}{% if ch.stream_info.video_codec == 'hevc' %}<span class="badge-hevc" title="H.265/HEVC â€” may not play in all clients">HEVC</span>{% endif %}{% endif %}</td>
+            <td title="{{ hover_parts|join(' · ') if hover_parts else '' }}"><strong>{{ ch.name }}</strong></td>
+            <td style="white-space:nowrap;padding-left:0.25rem;padding-right:0.25rem">{% if ch.name in duplicate_names %}<span class="dup-badge badge-dup-clickable" data-channel-id="{{ ch.id }}" style="cursor:pointer" title="Duplicate match found — click to see matches">DUP</span>{% elif ch.name in possible_duplicate_names %}<span class="dup-badge badge-dup-clickable" data-channel-id="{{ ch.id }}" style="cursor:pointer" title="Possible duplicate — click to see matches">DUP?</span>{% elif ch.id in gn_duplicate_ids %}<span class="dup-badge badge-dup-clickable" data-channel-id="{{ ch.id }}" style="cursor:pointer" title="Same Gracenote ID found on another source — click to see matches">GN DUP</span>{% endif %}{% if ch.is_duplicate %}<span class="badge-manual-dup badge-dup-clickable" data-channel-id="{{ ch.id }}" title="Click to see potential duplicates" style="cursor:pointer">DUPL</span>{% endif %}</td>
+            <td style="color:var(--text-muted)">{{ ch.source.display_name }}{% if ch.source.epg_only %} <span class="badge-epg-only" title="Source is EPG-only — excluded from M3U output">EPG</span>{% endif %}</td>
+            <td style="white-space:nowrap;padding-left:0.25rem;padding-right:0.25rem">{% if ch.stream_info %}{% if ch.stream_info.has_4k %}<span class="badge-4k" title="4K stream ({{ ch.stream_info.max_resolution }})">4K</span>{% elif ch.stream_info.has_hd %}<span class="badge-hd" title="HD stream ({{ ch.stream_info.max_resolution }})">HD</span>{% endif %}{% if ch.stream_info.video_codec == 'hevc' %}<span class="badge-hevc" title="H.265/HEVC — may not play in all clients">HEVC</span>{% endif %}{% endif %}</td>
             <td data-channel-id="{{ ch.id }}">
               {% if ch.category %}
                 <span class="cat-label{% if ch.category_override %} has-override{% endif %}"
                       style="color:var(--text-soft)"
                       onclick="openCatModal({{ ch.id }})">{{ ch.category }}</span>
               {% else %}
-                <span style="color:var(--text-dim)">â€”</span>
+                <span style="color:var(--text-dim)">—</span>
               {% endif %}
             </td>
             <td data-lang-channel-id="{{ ch.id }}">
               <span class="lang-label{% if ch.language_override %} has-override{% endif %}"
-                    onclick="openLangModal({{ ch.id }})">{{ ch.language_override or ch.language or 'â€”' }}</span>
+                    onclick="openLangModal({{ ch.id }})">{{ ch.language_override or ch.language or '—' }}</span>
             </td>
-            <td style="color:var(--text-muted);font-size:0.8rem">{{ ch.country or 'â€”' }}</td>
+            <td style="color:var(--text-muted);font-size:0.8rem">{{ ch.country or '—' }}</td>
             <td class="chnum-cell{% if ch.number_pinned %} chnum-pinned{% endif %}{% if ch.id in chnum_conflicts %} chnum-conflict{% endif %}"
                 data-chnum-cell="1"
                 data-channel-id="{{ ch.id }}"
                 data-pinned="{{ 'true' if ch.number_pinned else 'false' }}">
-              <span class="chnum-display">{{ chnum_map.get(ch.id) or 'â€”' }}</span>
-              {% if ch.number_pinned %}<button class="chnum-pin-btn" onclick="chnumUnpin(event,{{ ch.id }})" title="Unpin â€” let feed assign this number">ðŸ”’</button>{% endif %}
+              <span class="chnum-display">{{ chnum_map.get(ch.id) or '—' }}</span>
+              {% if ch.number_pinned %}<button class="chnum-pin-btn" onclick="chnumUnpin(event,{{ ch.id }})" title="Unpin — let feed assign this number">🔒</button>{% endif %}
             </td>
 
-            {# â”€â”€ Gracenote ID cell â”€â”€ #}
+            {# ── Gracenote ID cell ── #}
             <td class="gn-cell">
               {% set gn_mode = ch.gracenote_mode or ('manual' if ch.gracenote_locked and ch.gracenote_id else 'auto') %}
               <div class="gn-wrap">
@@ -1550,7 +1550,7 @@
                   data-original="{{ ch.gracenote_id or '' }}"
                   data-original-mode="{{ gn_mode }}"
                   value="{{ ch.gracenote_id or '' }}"
-                  placeholder="EPâ€¦"
+                  placeholder="EP…"
                   maxlength="32"
                   spellcheck="false"
                   autocomplete="off"
@@ -1566,19 +1566,19 @@
               <div class="channel-actions">
                 <div id="flags-cell-{{ ch.id }}" class="flag-group">
                   {% if ch.disable_reason and ch.disable_reason.startswith('DRM') %}
-                  <span class="flag-icon flag-clickable" onclick="openReenableModal({{ ch.id }}, 'DRM')" title="{{ ch.disable_reason }} â€” stream is protected, not playable in generic IPTV clients. Click to re-enable.">ðŸ”’</span>
+                  <span class="flag-icon flag-clickable" onclick="openReenableModal({{ ch.id }}, 'DRM')" title="{{ ch.disable_reason }} — stream is protected, not playable in generic IPTV clients. Click to re-enable.">🔒</span>
                   {% elif ch.disable_reason == 'Dead' %}
-                  <span class="flag-icon flag-clickable" onclick="openReenableModal({{ ch.id }}, 'Dead')" title="Dead â€” stream audit found this channel not currently playable. Click to re-enable.">ðŸ’€</span>
+                  <span class="flag-icon flag-clickable" onclick="openReenableModal({{ ch.id }}, 'Dead')" title="Dead — stream audit found this channel not currently playable. Click to re-enable.">💀</span>
                   {% endif %}
                   {% if ch.is_duplicate %}
-                  <button class="btn-clear-dup" id="cleardup-{{ ch.id }}" onclick="clearManualDup({{ ch.id }}, this)" title="Remove duplicate label">âŠ˜</button>
+                  <button class="btn-clear-dup" id="cleardup-{{ ch.id }}" onclick="clearManualDup({{ ch.id }}, this)" title="Remove duplicate label">⊘</button>
                   {% endif %}
                 </div>
-                <button class="btn-preview btn-icon" onclick="openPreview({{ ch.id }})" title="Preview: view current and next program, preview playback">ðŸ“º</button>
+                <button class="btn-preview btn-icon" onclick="openPreview({{ ch.id }})" title="Preview: view current and next program, preview playback">📺</button>
                 <button class="btn-inspect" onclick="inspectChannel({{ ch.id }}, this)" title="Test stream: check DRM, liveness, and segment data">&#128269;</button>
-                <button class="btn-pin-feed{% if ch.id not in in_any_feed_ids %} not-in-feed{% endif %}" onclick="openPinFeedMenu({{ ch.id }}, this)" title="{% if ch.id in in_any_feed_ids %}Manage feed membership{% else %}Not in any feed â€” add to one{% endif %}">ðŸ—‚ï¸</button>
+                <button class="btn-pin-feed{% if ch.id not in in_any_feed_ids %} not-in-feed{% endif %}" onclick="openPinFeedMenu({{ ch.id }}, this)" title="{% if ch.id in in_any_feed_ids %}Manage feed membership{% else %}Not in any feed — add to one{% endif %}">🗂️</button>
                 {% if not ch.is_duplicate %}
-                <button class="btn-mark-dup" id="markdup-{{ ch.id }}" onclick="markManualDup({{ ch.id }}, this)" title="Mark as duplicate â€” adds a DUPL label for filtering (does not disable the channel)">âŠ˜</button>
+                <button class="btn-mark-dup" id="markdup-{{ ch.id }}" onclick="markManualDup({{ ch.id }}, this)" title="Mark as duplicate — adds a DUPL label for filtering (does not disable the channel)">⊘</button>
                 {% endif %}
               </div>
             </td>
@@ -1591,7 +1591,7 @@
                 </label>
               </div>
               {% if ch.is_enabled and not ch.is_active %}
-              <div class="inactive-warn" title="Enabled by you, but missing from recent scrapes â€” not currently in output">not in output</div>
+              <div class="inactive-warn" title="Enabled by you, but missing from recent scrapes — not currently in output">not in output</div>
               {% endif %}
             </td>
           </tr>
@@ -1604,7 +1604,7 @@
     {% set qs = filter_qs %}
     <div class="pagination">
       {% if channels.has_prev %}
-      <a href="?page={{ channels.prev_num }}&{{ qs }}">â† Prev</a>
+      <a href="?page={{ channels.prev_num }}&{{ qs }}">← Prev</a>
       {% endif %}
       <span class="page-info">Page {{ channels.page }} of {{ channels.pages }} ({{ channels.total }} channels)</span>
       <form class="page-jump" onsubmit="jumpToPage(event, {{ channels.pages }}, '{{ qs|e }}')">
@@ -1613,7 +1613,7 @@
         <button type="submit">Go</button>
       </form>
       {% if channels.has_next %}
-      <a href="?page={{ channels.next_num }}&{{ qs }}">Next â†’</a>
+      <a href="?page={{ channels.next_num }}&{{ qs }}">Next →</a>
       {% endif %}
     </div>
     {% else %}
@@ -1627,7 +1627,7 @@
   <div class="modal-overlay" id="catModal" onclick="if(event.target===this)closeCatModal()">
     <div class="modal-box" style="max-width:440px">
       <div id="catModal-content">
-        <div class="modal-loading">Loadingâ€¦</div>
+        <div class="modal-loading">Loading…</div>
       </div>
     </div>
   </div>
@@ -1639,7 +1639,7 @@
        onclick="if(event.target===this&&_logoModalMousedownOnOverlay){_logoModalMousedownOnOverlay=false;closeLogoModal()}else{_logoModalMousedownOnOverlay=false}">
     <div class="modal-box" style="max-width:420px">
       <div id="logoModal-content">
-        <div class="modal-loading">Loadingâ€¦</div>
+        <div class="modal-loading">Loading…</div>
       </div>
     </div>
   </div>
@@ -1651,7 +1651,7 @@
        onclick="if(event.target===this&&_langModalMousedownOnOverlay){_langModalMousedownOnOverlay=false;closeLangModal()}else{_langModalMousedownOnOverlay=false}">
     <div class="modal-box" style="max-width:400px">
       <div id="langModal-content">
-        <div class="modal-loading">Loadingâ€¦</div>
+        <div class="modal-loading">Loading…</div>
       </div>
     </div>
   </div>
@@ -1666,7 +1666,7 @@
   <div class="modal-overlay" id="dupModal" onclick="if(event.target===this)closeDupModal()">
     <div class="modal-box" style="max-width:580px">
       <div id="dupModal-content">
-        <div class="modal-loading">Loadingâ€¦</div>
+        <div class="modal-loading">Loading…</div>
       </div>
     </div>
   </div>
@@ -1674,7 +1674,7 @@
   <div class="modal-overlay" id="preview-modal" onclick="closePreviewModal(event)">
     <div class="modal-box preview-modal">
       <div id="preview-content">
-        <div class="modal-loading">Loading previewâ€¦</div>
+        <div class="modal-loading">Loading preview…</div>
       </div>
     </div>
   </div>
@@ -1682,7 +1682,7 @@
   <div class="modal-overlay" id="gs-suggest-modal" onclick="if(event.target===this)closeGracenoteSuggestModal()">
     <div class="modal-box gs-modal">
       <div id="gs-suggest-modal-content">
-        <div class="modal-loading">Loading suggestionsâ€¦</div>
+        <div class="modal-loading">Loading suggestions…</div>
       </div>
     </div>
   </div>
@@ -1742,16 +1742,16 @@
       const isMovie = categories.includes('movie') || categories.includes('movies');
       if (!isMovie && program.episode_title) episodeBits.push(program.episode_title);
       if (!isMovie && program.season && program.episode) episodeBits.push(`S${program.season} E${program.episode}`);
-      const episodeLine = episodeBits.length ? `<div class="preview-program-time">${episodeBits.join(' Â· ')}</div>` : '';
+      const episodeLine = episodeBits.length ? `<div class="preview-program-time">${episodeBits.join(' · ')}</div>` : '';
 
       return `
         <div class="preview-card">
           <h3>${title}</h3>
           <div class="preview-program-title">${escapeHtml(program.title || 'Untitled')}</div>
-          <div class="preview-program-time">${formatPreviewTime(program.start_time)} â€“ ${formatPreviewTime(program.end_time)}</div>
+          <div class="preview-program-time">${formatPreviewTime(program.start_time)} – ${formatPreviewTime(program.end_time)}</div>
           ${episodeLine}
           ${program.description ? `<div class="preview-program-desc">${escapeHtml(program.description)}</div>` : ''}
-          ${program.category ? `<div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-dim)">${program.category.split(';').map(c => escapeHtml(c.trim())).join(' Â· ')}</div>` : ''}
+          ${program.category ? `<div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-dim)">${program.category.split(';').map(c => escapeHtml(c.trim())).join(' · ')}</div>` : ''}
         </div>
       `;
     }
@@ -1765,7 +1765,7 @@
         input.dataset.originalMode = 'manual';
         input.classList.add('gn-set');
         input.classList.remove('gn-err');
-        gnSetStatus(input, 'ok', 'âœ“');
+        gnSetStatus(input, 'ok', '✓');
         setTimeout(() => gnClearStatus(input), 2500);
       }
       if (sel) {
@@ -1778,7 +1778,7 @@
     async function openPreview(channelId) {
       const modal = document.getElementById('preview-modal');
       const content = document.getElementById('preview-content');
-      content.innerHTML = '<div class="modal-loading">Loading previewâ€¦</div>';
+      content.innerHTML = '<div class="modal-loading">Loading preview…</div>';
       modal.classList.add('open');
 
       try {
@@ -1801,18 +1801,18 @@
               <div class="preview-title">${escapeHtml(ch.name || 'Channel')}</div>
               <div class="preview-meta">
                 ${escapeHtml(ch.source_display_name || 'Unknown source')}
-                ${ch.country ? ` Â· ${escapeHtml(ch.country)}` : ''}
-                ${ch.category ? ` Â· ${escapeHtml(ch.category)}` : ''}
-                ${ch.language ? ` Â· ${escapeHtml(ch.language)}` : ''}
+                ${ch.country ? ` · ${escapeHtml(ch.country)}` : ''}
+                ${ch.category ? ` · ${escapeHtml(ch.category)}` : ''}
+                ${ch.language ? ` · ${escapeHtml(ch.language)}` : ''}
               </div>
-              ${(ch.tags && ch.tags.length > 1) ? `<div style="margin-top:0.3rem;font-size:0.78rem;color:var(--text-dim)">${ch.tags.map(t => escapeHtml(t)).join(' Â· ')}</div>` : ''}
+              ${(ch.tags && ch.tags.length > 1) ? `<div style="margin-top:0.3rem;font-size:0.78rem;color:var(--text-dim)">${ch.tags.map(t => escapeHtml(t)).join(' · ')}</div>` : ''}
             </div>
           </div>
           ${ch.description ? `<div class="preview-description">${escapeHtml(ch.description)}</div>` : '<div class="preview-description preview-description--empty">No channel description available.</div>'}
           <div class="preview-epg-coverage">
             ${data.epg_programs > 0
-              ? `ðŸ“… Channel has <strong>${data.epg_programs}</strong> program${data.epg_programs !== 1 ? 's' : ''} and <strong>${data.epg_hours}h</strong> of program data available from source`
-              : 'ðŸ“… No program data available from source'}
+              ? `📅 Channel has <strong>${data.epg_programs}</strong> program${data.epg_programs !== 1 ? 's' : ''} and <strong>${data.epg_hours}h</strong> of program data available from source`
+              : '📅 No program data available from source'}
           </div>
           ${warning}
           ${playbackNote}
@@ -1876,7 +1876,7 @@
       video.removeAttribute('src');
       video.load();
       wrap.classList.add('open');
-      if (status) status.textContent = 'Loading streamâ€¦';
+      if (status) status.textContent = 'Loading stream…';
 
       if (window.Hls && window.Hls.isSupported()) {
         _previewHls = new window.Hls({
@@ -1895,11 +1895,11 @@
             if (details.includes('IncompatibleCodecs') || details.includes('incompatibleCodecs')) {
               status.textContent = 'Browser preview unavailable: this stream uses a codec (e.g. HEVC/H.265) that your browser cannot decode. Use "Open Externally" to play in VLC or Channels DVR.';
             } else if (details === 'bufferStalledError') {
-              status.textContent = 'Browser preview stalled: the stream buffer could not be filled. This is common with HEVC/H.265 (4K) channels â€” use "Open Externally" to play in VLC or Channels DVR.';
+              status.textContent = 'Browser preview stalled: the stream buffer could not be filled. This is common with HEVC/H.265 (4K) channels — use "Open Externally" to play in VLC or Channels DVR.';
             } else if (details.includes('manifestLoad') || details.includes('manifestParse')) {
               status.textContent = 'Browser preview unavailable for this source (CORS restriction on stream CDN). Use "Open Externally" to play outside the browser preview.';
             } else {
-              const fatal = data?.fatal ? 'Fatal â€” ' : '';
+              const fatal = data?.fatal ? 'Fatal — ' : '';
               status.textContent = `Preview error: ${fatal}${details || 'Unknown hls.js error'}`;
             }
           }
@@ -1924,7 +1924,7 @@
       if (status) status.textContent = 'This browser does not support HLS playback here.';
     }
 
-    // â”€â”€ Stats for Nerds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Stats for Nerds ──────────────────────────────────────────────────────
     let _statsInterval  = null;
     let _statsVisible   = false;
     let _lastFrag       = null;
@@ -1976,11 +1976,11 @@
       const hls = _previewHls;
       const rows = [];
 
-      const fmt = (v, u='') => v != null ? `${v}${u}` : 'â€”';
+      const fmt = (v, u='') => v != null ? `${v}${u}` : '—';
 
       // Resolution & frame rate
       const vw = video.videoWidth, vh = video.videoHeight;
-      const res = vw ? `${vw}Ã—${vh}` : 'â€”';
+      const res = vw ? `${vw}×${vh}` : '—';
       rows.push(['Resolution', res]);
 
       // Dropped frames
@@ -1992,7 +1992,7 @@
       }
 
       // Playback rate & current time
-      rows.push(['Playback', `${video.paused ? 'Paused' : 'Playing'}  ${video.playbackRate}Ã—`]);
+      rows.push(['Playback', `${video.paused ? 'Paused' : 'Playing'}  ${video.playbackRate}×`]);
 
       if (hls) {
         // Bandwidth estimate
@@ -2072,14 +2072,14 @@
       modal.classList.remove('open');
     }
 
-    // â”€â”€ Channel inspector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Channel inspector ─────────────────────────────────────────────────
     const INSPECT_LABELS = {
-      live:    'âœ“ Live',
-      drm:     'ðŸ”’ DRM',
-      dead:    'ðŸ’€ Dead',
-      vod:     'ðŸ“¼ VOD',
-      no_data: 'âš  No Data',
-      error:   'âœ• Error',
+      live:    '✓ Live',
+      drm:     '🔒 DRM',
+      dead:    '💀 Dead',
+      vod:     '📼 VOD',
+      no_data: '⚠ No Data',
+      error:   '✕ Error',
     };
 
     async function inspectChannel(channelId, btn) {
@@ -2088,7 +2088,7 @@
       // Replace only the inspect button with a spinner
       const spinner = document.createElement('span');
       spinner.className = 'inspect-badge spin';
-      spinner.textContent = 'â†»';
+      spinner.textContent = '↻';
       btn.replaceWith(spinner);
 
       try {
@@ -2111,7 +2111,7 @@
         // Build tooltip: detail line + variant table for nerds
         let tooltip = data.detail || '';
         if (data.variants && data.variants.length > 0) {
-          tooltip += '\n\nVariants (high â†’ low):';
+          tooltip += '\n\nVariants (high → low):';
           data.variants.forEach(v => {
             const mbps  = v.bandwidth ? `${(v.bandwidth/1e6).toFixed(1)} Mbps` : '';
             const res   = v.resolution || '';
@@ -2137,7 +2137,7 @@
       } catch (e) {
         const badge = document.createElement('span');
         badge.className = 'inspect-badge error';
-        badge.textContent = 'âœ• Error';
+        badge.textContent = '✕ Error';
         badge.title = String(e);
         badge.style.cursor = 'pointer';
         badge.onclick = () => {
@@ -2152,7 +2152,7 @@
       }
     }
 
-    // â”€â”€ Gracenote ID â€” inline edit, save on blur â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Gracenote ID — inline edit, save on blur ───────────────────────────
     const GN_RE = /^(\d+|(EP|SH|MV|SP|TR)\d+)$/;
 
     document.querySelectorAll('.gn-mode').forEach(sel => gnSyncModeUI(sel));
@@ -2212,7 +2212,7 @@
       const mode      = sel ? sel.value : (inp.dataset.originalMode || 'auto');
       const originalMode = inp.dataset.originalMode || 'auto';
 
-      // Nothing changed â€” skip the round-trip
+      // Nothing changed — skip the round-trip
       if (!opts.force && raw === original && mode === originalMode) return;
 
       if (mode === 'manual' && raw === '') {
@@ -2225,14 +2225,14 @@
 
       // Client-side format check (empty = clear, otherwise must match pattern)
       if (raw !== '' && !GN_RE.test(raw)) {
-        gnSetStatus(inp, 'err', 'âœ•');
+        gnSetStatus(inp, 'err', '✕');
         inp.classList.add('gn-err');
         inp.classList.remove('gn-set');
-        inp.title = 'Invalid ID â€” must be numeric (e.g. 122912) or EP/SH/MV/SP/TR + digits (e.g. EP012345678)';
+        inp.title = 'Invalid ID — must be numeric (e.g. 122912) or EP/SH/MV/SP/TR + digits (e.g. EP012345678)';
         return;
       }
 
-      gnSetStatus(inp, 'spin', 'â†»');
+      gnSetStatus(inp, 'spin', '↻');
       inp.classList.add('gn-saving');
 
       try {
@@ -2262,14 +2262,14 @@
 
         if (savedRaw) {
           inp.classList.add('gn-set');
-          gnSetStatus(inp, 'ok', 'âœ“');
+          gnSetStatus(inp, 'ok', '✓');
           setTimeout(() => gnClearStatus(inp), 2500);
         } else {
           inp.classList.remove('gn-set');
           gnClearStatus(inp);
         }
       } catch (e) {
-        gnSetStatus(inp, 'err', 'âœ•');
+        gnSetStatus(inp, 'err', '✕');
         inp.classList.add('gn-err');
         inp.classList.remove('gn-set');
         inp.title = e.message;
@@ -2300,7 +2300,7 @@
       inp.title = 'Gracenote station ID (e.g. EP012345678). Saved automatically on leaving the field.';
     }
 
-    // â”€â”€ Single M3U toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Single M3U toggle ──────────────────────────────────────────────────
     async function toggle(channelId, checkbox) {
       const label = document.getElementById(`toggle-${channelId}`);
       const row   = document.getElementById(`row-${channelId}`);
@@ -2342,7 +2342,7 @@
           if (!cell || !cid) continue;
           const value  = chnumMap[cid];
           const pinned = !!pinnedMap[cid];
-          _chnumRenderCell(cell, cid, value != null ? String(value) : 'â€”', pinned, conflictSet.has(cid));
+          _chnumRenderCell(cell, cid, value != null ? String(value) : '—', pinned, conflictSet.has(cid));
         }
       } catch (e) {
         console.error('Chnum refresh failed:', e);
@@ -2366,8 +2366,8 @@
       if (pinned && !btn) {
         btn = document.createElement('button');
         btn.className = 'chnum-pin-btn';
-        btn.title = 'Unpin â€” let feed assign this number';
-        btn.textContent = 'ðŸ”’';
+        btn.title = 'Unpin — let feed assign this number';
+        btn.textContent = '🔒';
         btn.onclick = (e) => chnumUnpin(e, parseInt(cid));
         cell.appendChild(btn);
       } else if (!pinned && btn) {
@@ -2388,7 +2388,7 @@
       const inp = document.createElement('input');
       inp.type = 'number';
       inp.className = 'chnum-input';
-      inp.value = (current === 'â€”' || current === '') ? '' : current;
+      inp.value = (current === '—' || current === '') ? '' : current;
       inp.min = 1;
       span.replaceWith(inp);
       inp.focus();
@@ -2477,7 +2477,7 @@
         clearBtn.className = 'btn-clear-dup';
         clearBtn.id = `cleardup-${channelId}`;
         clearBtn.title = 'Remove duplicate label';
-        clearBtn.textContent = 'âŠ˜';
+        clearBtn.textContent = '⊘';
         clearBtn.onclick = () => clearManualDup(channelId, clearBtn);
         flagsCell.appendChild(clearBtn);
       }
@@ -2525,8 +2525,8 @@
             <div class="dup-finder-source">${escapeHtml(data.channel.source)}</div>
           </div>
         </div>
-        ${data.strict.length ? `<div class="dup-finder-group-label">Strict matches â€” same name, different source</div>${strictHtml}` : ''}
-        ${data.soft.length   ? `<div class="dup-finder-group-label soft">Possible matches â€” similar name</div>${softHtml}` : ''}
+        ${data.strict.length ? `<div class="dup-finder-group-label">Strict matches — same name, different source</div>${strictHtml}` : ''}
+        ${data.soft.length   ? `<div class="dup-finder-group-label soft">Possible matches — similar name</div>${softHtml}` : ''}
         <div class="dup-finder-actions">
           <button class="btn-cancel-modal" onclick="closeDupModal()">Cancel</button>
           <button class="btn-primary" id="dupModal-confirm">Mark Selected as Duplicate</button>
@@ -2536,7 +2536,7 @@
         const checked = [...content.querySelectorAll('input[name=dup-pick]:checked')].map(el => parseInt(el.value));
         const confirmBtn = document.getElementById('dupModal-confirm');
         confirmBtn.disabled = true;
-        confirmBtn.textContent = 'Savingâ€¦';
+        confirmBtn.textContent = 'Saving…';
         try {
           // Mark the original channel
           await _applyDuplicate(channelId);
@@ -2596,19 +2596,19 @@
       const si = ch.stream_info;
       if (si) {
         // Video resolution
-        let resLabel = 'â€”', resClass = 'dc-sv-muted';
+        let resLabel = '—', resClass = 'dc-sv-muted';
         if (si.has_4k) { resLabel = si.max_resolution || '4K'; resClass = 'dc-sv-4k'; }
         else if (si.has_hd) { resLabel = si.max_resolution || 'HD'; resClass = 'dc-sv-hd'; }
         else if (si.max_resolution) { resLabel = si.max_resolution; resClass = 'dc-sv-sd'; }
         stats.push(`<div class="dc-stat"><span class="dc-stat-lbl">Video</span><span class="dc-stat-val ${resClass}">${resLabel}</span></div>`);
         // Codec
-        const codecLabel = !si.video_codec ? 'â€”'
+        const codecLabel = !si.video_codec ? '—'
           : si.video_codec === 'h264'  ? 'H.264'
           : si.video_codec === 'hevc'  ? 'HEVC'
           : si.video_codec === 'mpeg2' ? 'MPEG-2'
           : si.video_codec.toUpperCase();
         const codecClass = si.video_codec === 'hevc' ? 'dc-sv-warn' : '';
-        stats.push(`<div class="dc-stat"><span class="dc-stat-lbl">Codec</span><span class="dc-stat-val ${codecClass}">${codecLabel}${si.drm ? ' Â· DRM' : ''}</span></div>`);
+        stats.push(`<div class="dc-stat"><span class="dc-stat-lbl">Codec</span><span class="dc-stat-val ${codecClass}">${codecLabel}${si.drm ? ' · DRM' : ''}</span></div>`);
       } else {
         stats.push(`<div class="dc-stat"><span class="dc-stat-lbl">Video</span><span class="dc-stat-val dc-sv-muted">Not audited</span></div>`);
       }
@@ -2632,7 +2632,7 @@
 
       // Missed scrapes (only if notable)
       if (ch.missed_scrapes >= 2) {
-        stats.push(`<div class="dc-stat"><span class="dc-stat-lbl">Missed</span><span class="dc-stat-val dc-sv-warn">${ch.missed_scrapes}Ã— scrapes</span></div>`);
+        stats.push(`<div class="dc-stat"><span class="dc-stat-lbl">Missed</span><span class="dc-stat-val dc-sv-warn">${ch.missed_scrapes}× scrapes</span></div>`);
       }
 
       // Action buttons
@@ -2663,7 +2663,7 @@
     window.openDupFinderView = async function(channelId) {
       const modal = document.getElementById('dupModal');
       const content = document.getElementById('dupModal-content');
-      content.innerHTML = '<div class="modal-loading">Loadingâ€¦</div>';
+      content.innerHTML = '<div class="modal-loading">Loading…</div>';
       modal.classList.add('open');
       try {
         const res  = await fetch(`/api/channels/${channelId}/duplicates`);
@@ -2675,7 +2675,7 @@
         html += `<div class="dc-group-label">This channel</div>`;
         html += _dcRenderCard(data.channel, true);
         if (data.strict.length) {
-          html += `<div class="dc-group-label">Exact matches â€” same name, different source</div>`;
+          html += `<div class="dc-group-label">Exact matches — same name, different source</div>`;
           html += data.strict.map(c => _dcRenderCard(c, false)).join('');
         }
         if (data.soft.length) {
@@ -2683,7 +2683,7 @@
           html += data.soft.map(c => _dcRenderCard(c, false)).join('');
         }
         if ((data.gn || []).length) {
-          html += `<div class="dc-group-label">Same Gracenote ID â€” different name</div>`;
+          html += `<div class="dc-group-label">Same Gracenote ID — different name</div>`;
           html += data.gn.map(c => _dcRenderCard(c, false)).join('');
         }
         if (!hasAny) {
@@ -2704,7 +2704,7 @@
       const newEnabled = !curEnabled;
       btn.disabled = true;
       const prevText = btn.textContent;
-      btn.textContent = 'â€¦';
+      btn.textContent = '…';
       try {
         const r = await fetch(`/api/channels/${channelId}`, {
           method: 'PATCH', headers: {'Content-Type': 'application/json'},
@@ -2742,7 +2742,7 @@
       const newDup = !curDup;
       btn.disabled = true;
       const prevText = btn.textContent;
-      btn.textContent = 'â€¦';
+      btn.textContent = '…';
       try {
         const r = await fetch(`/api/channels/${channelId}`, {
           method: 'PATCH', headers: {'Content-Type': 'application/json'},
@@ -2787,7 +2787,7 @@
             if (actionsDiv && !document.getElementById(`markdup-${channelId}`)) {
               const mb = document.createElement('button');
               mb.className = 'btn-mark-dup'; mb.id = `markdup-${channelId}`;
-              mb.title = 'Mark as duplicate';  mb.textContent = 'âŠ˜';
+              mb.title = 'Mark as duplicate';  mb.textContent = '⊘';
               mb.onclick = () => markManualDup(channelId, mb);
               actionsDiv.appendChild(mb);
             }
@@ -2814,14 +2814,14 @@
         row.querySelector('.badge-manual-dup')?.remove();
         // Remove clear button
         btn.remove();
-        // Re-add the âŠ˜ mark button to channel-actions
+        // Re-add the ⊘ mark button to channel-actions
         const actionsDiv = document.querySelector(`#inspect-cell-${channelId} .channel-actions`);
         if (actionsDiv) {
           const markBtn = document.createElement('button');
           markBtn.className = 'btn-mark-dup';
           markBtn.id = `markdup-${channelId}`;
-          markBtn.title = 'Mark as duplicate â€” adds a DUPL label for filtering (does not disable the channel)';
-          markBtn.textContent = 'âŠ˜';
+          markBtn.title = 'Mark as duplicate — adds a DUPL label for filtering (does not disable the channel)';
+          markBtn.textContent = '⊘';
           markBtn.onclick = () => markManualDup(channelId, markBtn);
           actionsDiv.appendChild(markBtn);
         }
@@ -2835,7 +2835,7 @@
 
     function openReenableModal(channelId, flagType) {
       _reenableChannelId = channelId;
-      const icon = flagType === 'DRM' ? 'ðŸ”’' : 'ðŸ’€';
+      const icon = flagType === 'DRM' ? '🔒' : '💀';
       const label = flagType === 'DRM' ? 'DRM-protected' : 'Dead';
       document.getElementById('reenable-modal-title').textContent = `Re-enable ${icon} ${label} Channel`;
       document.getElementById('reenable-modal-body').textContent =
@@ -2853,7 +2853,7 @@
       if (!channelId) return;
       const btn = document.getElementById('reenable-confirm-btn');
       btn.disabled = true;
-      btn.textContent = 'â€¦';
+      btn.textContent = '…';
       try {
         const r = await fetch(`/api/channels/${channelId}`, {
           method:  'PATCH',
@@ -2878,7 +2878,7 @@
 
     let _bulkSelectionScope = 'page';
 
-    // â”€â”€ Select all / bulk â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Select all / bulk ─────────────────────────────────────────────────
     function toggleAll(masterCb) {
       _bulkSelectionScope = 'page';
       document.querySelectorAll('.row-check').forEach(cb => cb.checked = masterCb.checked);
@@ -2934,7 +2934,7 @@
       document.getElementById('bulk-select-hint').classList.remove('visible');
     }
 
-    // â”€â”€ Sort by column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Sort by column ────────────────────────────────────────────────────
     function sortBy(col) {
       const params = new URLSearchParams(window.location.search);
       const cur    = params.get('sort') || 'name';
@@ -2961,7 +2961,7 @@
 
     function onFeedFilterChange(sel) {
       if (sel.value && sel.value !== '__none__') {
-        // Feed selected â€” default to active+enabled unless user already has an override
+        // Feed selected — default to active+enabled unless user already has an override
         const enabledSel  = document.getElementById('enabled-filter');
         const presenceSel = document.getElementById('presence-filter');
         if (enabledSel  && (enabledSel.value  === '' || enabledSel.value  === 'any')) enabledSel.value  = '1';
@@ -3002,10 +3002,10 @@
           });
           const data = await r.json();
           if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-          showToast(`âœ“ ${label.charAt(0).toUpperCase() + label.slice(1)}d ${data.updated} channel${data.updated !== 1 ? 's' : ''}`);
+          showToast(`✓ ${label.charAt(0).toUpperCase() + label.slice(1)}d ${data.updated} channel${data.updated !== 1 ? 's' : ''}`);
           setTimeout(() => window.location.reload(), 800);
         } catch (e) {
-          showToast('âš  Bulk request failed â€” ' + e.message);
+          showToast('⚠ Bulk request failed — ' + e.message);
         }
         return;
       }
@@ -3054,14 +3054,14 @@
         });
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-        showToast(`âœ“ Updated ${data.updated} channel${data.updated !== 1 ? 's' : ''}`);
+        showToast(`✓ Updated ${data.updated} channel${data.updated !== 1 ? 's' : ''}`);
         setTimeout(() => window.location.reload(), 800);
       } catch (e) {
-        showToast('âš  Bulk request failed â€” ' + e.message);
+        showToast('⚠ Bulk request failed — ' + e.message);
       }
     }
 
-    // â”€â”€ Pin-to-feed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Pin-to-feed ───────────────────────────────────────────────────────
     let _pinChannelId = null;
     const _membershipCache = {};  // channelId -> {feed_id: {status, feed_channel_number}}
 
@@ -3087,7 +3087,7 @@
       const list = document.getElementById('pinFeedDropdown-list');
 
       // Show loading state immediately
-      list.innerHTML = '<div class="pfd-empty">Loadingâ€¦</div>';
+      list.innerHTML = '<div class="pfd-empty">Loading…</div>';
       _positionDropdown(menu, btn);
 
       if (!FEEDS.length) {
@@ -3135,13 +3135,13 @@
         b.style.alignItems = 'center';
 
         if (status === 'pinned') {
-          b.innerHTML = `<span style="color:var(--success-border);margin-right:0.4rem">ðŸ“Œ</span>${f.name}${numberBadge}<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;padding-left:0.5rem">unpin</span>`;
+          b.innerHTML = `<span style="color:var(--success-border);margin-right:0.4rem">📌</span>${f.name}${numberBadge}<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;padding-left:0.5rem">unpin</span>`;
           b.onclick = () => _feedAction(channelId, f.id, f.name, 'unpin');
         } else if (status === 'filtered') {
-          b.innerHTML = `<span style="color:var(--accent-soft);margin-right:0.4rem">â—</span>${f.name}${numberBadge}<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;padding-left:0.5rem">exclude</span>`;
+          b.innerHTML = `<span style="color:var(--accent-soft);margin-right:0.4rem">●</span>${f.name}${numberBadge}<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;padding-left:0.5rem">exclude</span>`;
           b.onclick = () => _feedAction(channelId, f.id, f.name, 'exclude');
         } else if (status === 'excluded') {
-          b.innerHTML = `<span style="color:var(--danger);margin-right:0.4rem">âœ•</span>${f.name}${numberBadge}<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;padding-left:0.5rem">re-add</span>`;
+          b.innerHTML = `<span style="color:var(--danger);margin-right:0.4rem">✕</span>${f.name}${numberBadge}<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;padding-left:0.5rem">re-add</span>`;
           b.onclick = () => _feedAction(channelId, f.id, f.name, 'unexclude');
         } else {
           b.innerHTML = f.name;
@@ -3165,7 +3165,7 @@
       };
       const [url, method, body] = endpoints[action];
       const toasts = {
-        pin: `âœ“ Pinned to "${feedName}"`, unpin: `Unpinned from "${feedName}"`,
+        pin: `✓ Pinned to "${feedName}"`, unpin: `Unpinned from "${feedName}"`,
         exclude: `Excluded from "${feedName}"`, unexclude: `Re-added to "${feedName}"`,
       };
       const nextStatus = {pin: 'pinned', unpin: 'absent', exclude: 'excluded', unexclude: 'filtered'};
@@ -3191,7 +3191,7 @@
         }
         showToast(toasts[action]);
       } catch (e) {
-        showToast('âš  Could not update feed â€” ' + e.message);
+        showToast('⚠ Could not update feed — ' + e.message);
       }
     }
 
@@ -3203,12 +3203,12 @@
     });
   </script>
 
-  <!-- â”€â”€ Resolve Duplicates Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <!-- ── Resolve Duplicates Modal ───────────────────────────────────────── -->
   <div class="modal-overlay" id="resolve-modal" onclick="closeResolveDupesModal(event)">
     <div class="modal-box">
-      <h2>âš¡ Resolve Duplicates</h2>
-      <p class="modal-sub">Drag to set source priority. The top source wins each strict duplicate group and the others will be disabled. Strict matching is case-insensitive and ignores trailing <strong>by â€¦</strong> or <strong>presented by â€¦</strong>. Softer brand variants marked <strong>DUP?</strong>, such as TV/Channel/Network differences, are not auto-resolved here.</p>
-      <div id="resolve-modal-body" class="modal-loading">Loadingâ€¦</div>
+      <h2>⚡ Resolve Duplicates</h2>
+      <p class="modal-sub">Drag to set source priority. The top source wins each strict duplicate group and the others will be disabled. Strict matching is case-insensitive and ignores trailing <strong>by …</strong> or <strong>presented by …</strong>. Softer brand variants marked <strong>DUP?</strong>, such as TV/Channel/Network differences, are not auto-resolved here.</p>
+      <div id="resolve-modal-body" class="modal-loading">Loading…</div>
     </div>
   </div>
 
@@ -3224,7 +3224,7 @@
   </div>
 
   <script>
-    // â”€â”€ Resolve Duplicates Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Resolve Duplicates Modal ───────────────────────────────────────────
     let _dupSources = [];  // current ordered list
     let _dupSummary = null;
     let _selectedSoftDupGroups = new Set();
@@ -3233,7 +3233,7 @@
       const modal = document.getElementById('resolve-modal');
       const body  = document.getElementById('resolve-modal-body');
       modal.classList.add('open');
-      body.innerHTML = '<div class="modal-loading">Loadingâ€¦</div>';
+      body.innerHTML = '<div class="modal-loading">Loading…</div>';
 
       const res  = await fetch('/api/channels/duplicate-summary');
       const data = await res.json();
@@ -3260,12 +3260,12 @@
             <li class="priority-item" draggable="true" data-idx="${i}"
                 ondragstart="onDragStart(event)" ondragover="onDragOver(event)"
                 ondrop="onDrop(event)" ondragleave="onDragLeave(event)">
-              <span class="drag-handle">â ¿</span>
+              <span class="drag-handle">⠿</span>
               <span class="rank">${i + 1}</span>
               <span class="src-name">${s.display_name}</span>
               ${isRec ? '<span class="rec-badge">RECOMMENDED</span>' : ''}
-              ${s.epg_only ? '<span class="badge-epg-only" title="EPG-only source â€” cannot serve streams">EPG</span>' : ''}
-              <span class="src-meta">${s.dup_count} ch Â· ${s.gn_pct}% EPG</span>
+              ${s.epg_only ? '<span class="badge-epg-only" title="EPG-only source — cannot serve streams">EPG</span>' : ''}
+              <span class="src-meta">${s.dup_count} ch · ${s.gn_pct}% EPG</span>
             </li>`;
         }).join('');
         const willDisable = data.total_affected - data.total_groups;
@@ -3320,7 +3320,7 @@
           const sourceCount = group.sources.length;
           return `
             <div class="dup-soft-item ${selectedClass}" data-group-key=${JSON.stringify(group.group_key)} role="checkbox" aria-checked="${selected ? 'true' : 'false'}" tabindex="0" onclick="toggleSoftDupGroup(this.dataset.groupKey)" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleSoftDupGroup(this.dataset.groupKey); }">
-              <span class="dup-soft-check" aria-hidden="true">${selected ? 'âœ“' : ''}</span>
+              <span class="dup-soft-check" aria-hidden="true">${selected ? '✓' : ''}</span>
               <div class="dup-soft-main">
                 <div class="dup-soft-meta">
                   <span class="dup-soft-reason">Soft Match</span>
@@ -3402,7 +3402,7 @@
         item.classList.toggle('selected', isSelected);
         item.setAttribute('aria-checked', isSelected ? 'true' : 'false');
         const check = item.querySelector('.dup-soft-check');
-        if (check) check.textContent = isSelected ? 'âœ“' : '';
+        if (check) check.textContent = isSelected ? '✓' : '';
       });
 
       if (selectedCountEl) selectedCountEl.textContent = String(selectedCount);
@@ -3417,7 +3417,7 @@
 
     async function confirmResolve(btn) {
       btn.disabled = true;
-      btn.textContent = 'Resolvingâ€¦';
+      btn.textContent = 'Resolving…';
       try {
         const priority = _dupSources.map(s => s.name);
         const res  = await fetch('/api/channels/resolve-duplicates', {
@@ -3429,9 +3429,9 @@
         if (!res.ok) throw new Error(data.error || 'Failed to resolve duplicates');
         document.getElementById('resolve-modal-body').innerHTML = `
           <p style="color:var(--success-soft);font-size:0.95rem;text-align:center;padding:1.5rem 0">
-            âœ“ Done â€” disabled <strong>${data.disabled}</strong> duplicate channel${data.disabled !== 1 ? 's' : ''}
+            ✓ Done — disabled <strong>${data.disabled}</strong> duplicate channel${data.disabled !== 1 ? 's' : ''}
             across <strong>${data.groups_resolved}</strong> group${data.groups_resolved !== 1 ? 's' : ''}.
-            Reloadingâ€¦
+            Reloading…
           </p>
           <div class="modal-actions" style="justify-content:center">
             <button class="btn-confirm" onclick="location.reload()">Reload Page</button>
@@ -3467,7 +3467,7 @@
 
     async function confirmSoftResolve(btn) {
       btn.disabled = true;
-      btn.textContent = 'Resolvingâ€¦';
+      btn.textContent = 'Resolving…';
       try {
         const priority = _dupSources.map(s => s.name);
         const res  = await fetch('/api/channels/resolve-duplicates', {
@@ -3483,9 +3483,9 @@
         if (!res.ok) throw new Error(data.error || 'Failed to resolve soft duplicates');
         document.getElementById('resolve-modal-body').innerHTML = `
           <p style="color:var(--success-soft);font-size:0.95rem;text-align:center;padding:1.5rem 0">
-            âœ“ Done â€” disabled <strong>${data.disabled}</strong> channel${data.disabled !== 1 ? 's' : ''}
+            ✓ Done — disabled <strong>${data.disabled}</strong> channel${data.disabled !== 1 ? 's' : ''}
             across <strong>${data.groups_resolved}</strong> approved soft-match group${data.groups_resolved !== 1 ? 's' : ''}.
-            Reloadingâ€¦
+            Reloading…
           </p>
           <div class="modal-actions" style="justify-content:center">
             <button class="btn-confirm" onclick="location.reload()">Reload Page</button>
@@ -3502,7 +3502,7 @@
       }
     }
 
-    // â”€â”€ Drag-to-reorder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Drag-to-reorder ───────────────────────────────────────────────────
     let _dragIdx = null;
 
     function onDragStart(e) {
@@ -3534,7 +3534,7 @@
         });
     }
 
-    // â”€â”€ Language override modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Language override modal ───────────────────────────────────────────────
     const _langCache = {};
 
     let _langModalMousedownOnOverlay = false;
@@ -3546,7 +3546,7 @@
     async function openLangModal(chId) {
       const modal = document.getElementById('langModal');
       const content = document.getElementById('langModal-content');
-      content.innerHTML = '<div class="modal-loading">Loadingâ€¦</div>';
+      content.innerHTML = '<div class="modal-loading">Loading…</div>';
       modal.classList.add('open');
 
       let d;
@@ -3570,7 +3570,7 @@
       const langs = d.common_languages || [];
       const effective = currentOverride || d.language || 'en';
       const opts = langs.map(([code, label]) =>
-        `<option value="${escapeHtml(code)}"${code === effective ? ' selected' : ''}>${escapeHtml(code)} â€” ${escapeHtml(label)}</option>`
+        `<option value="${escapeHtml(code)}"${code === effective ? ' selected' : ''}>${escapeHtml(code)} — ${escapeHtml(label)}</option>`
       ).join('');
       // Add current value if not in the list
       const inList = langs.some(([code]) => code === effective);
@@ -3580,7 +3580,7 @@
         <h3 style="margin-bottom:0.75rem;font-size:1rem">${escapeHtml(d.channel_name)}</h3>
         <div style="margin-bottom:0.9rem;font-size:0.85rem;color:var(--text-soft)">
           Scraper-assigned: <strong style="color:var(--text-subtle)">${escapeHtml(d.language || 'en')}</strong>
-          ${currentOverride ? `&nbsp;Â·&nbsp;<span style="color:var(--warning-strong)">Override active: <strong>${escapeHtml(currentOverride)}</strong></span>` : ''}
+          ${currentOverride ? `&nbsp;·&nbsp;<span style="color:var(--warning-strong)">Override active: <strong>${escapeHtml(currentOverride)}</strong></span>` : ''}
         </div>
         <div style="margin-bottom:1rem">
           <label style="font-size:0.8rem;color:var(--text-soft);display:block;margin-bottom:0.3rem">Set language override:</label>
@@ -3637,14 +3637,14 @@
       const cell = document.querySelector(`td[data-lang-channel-id="${chId}"]`);
       if (cell) {
         const lbl = cell.querySelector('.lang-label');
-        if (lbl) { lbl.textContent = updated.language || 'â€”'; lbl.classList.remove('has-override'); }
+        if (lbl) { lbl.textContent = updated.language || '—'; lbl.classList.remove('has-override'); }
       }
       closeLangModal();
     }
 
-    // â”€â”€ Logo override modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Logo override modal ───────────────────────────────────────────────────
     let _logoModalChId              = null;
-    let _logoModalOpenAt            = 0;     // timestamp â€” guard against double-click auto-close
+    let _logoModalOpenAt            = 0;     // timestamp — guard against double-click auto-close
     let _logoModalMousedownOnOverlay = false; // true only when drag started on the overlay background
 
     function openLogoModal(chId) {
@@ -3740,7 +3740,7 @@
       location.reload();
     }
 
-    // â”€â”€ Category explain / override modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Category explain / override modal ────────────────────────────────────
     const _catCache = {};
     let _catModalChId = null;
 
@@ -3761,7 +3761,7 @@
       _catModalChId = chId;
       const modal = document.getElementById('catModal');
       const content = document.getElementById('catModal-content');
-      content.innerHTML = '<div class="modal-loading">Loadingâ€¦</div>';
+      content.innerHTML = '<div class="modal-loading">Loading…</div>';
       modal.classList.add('open');
 
       let d;
@@ -3795,7 +3795,7 @@
         <div style="margin-bottom:0.9rem">
           <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.3rem">How this category was determined:</div>
           <span class="source-badge ${escapeHtml(src)}">${escapeHtml(srcLabel)}</span>
-          <div style="font-size:0.85rem;color:var(--text-subtle)">${escapeHtml(d.detail || 'â€”')}</div>
+          <div style="font-size:0.85rem;color:var(--text-subtle)">${escapeHtml(d.detail || '—')}</div>
           ${currentOverride ? `<div style="margin-top:0.4rem;font-size:0.78rem;color:var(--warning-strong)">Override active: <strong>${escapeHtml(currentOverride)}</strong></div>` : ''}
         </div>
         <div style="margin-bottom:1rem">
@@ -3853,7 +3853,7 @@
       const cell = document.querySelector(`td[data-channel-id="${chId}"]`);
       if (cell) {
         const lbl = cell.querySelector('.cat-label');
-        if (lbl) { lbl.textContent = updated.category || 'â€”'; lbl.classList.remove('has-override'); }
+        if (lbl) { lbl.textContent = updated.category || '—'; lbl.classList.remove('has-override'); }
       }
       closeCatModal();
     }
