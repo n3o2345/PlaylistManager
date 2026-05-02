@@ -100,4 +100,9 @@ def create_app(config_class=Config):
     def root():
         return redirect(url_for('admin.dashboard'))
 
+    @app.route('/health')
+    def health():
+        from flask import Response
+        return Response('ok', status=200, mimetype='text/plain')
+
     return app
