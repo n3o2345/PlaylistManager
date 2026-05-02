@@ -20,6 +20,10 @@ RUN playwright install-deps chromium && playwright install chromium
 
 COPY . .
 
+# Strip Windows line endings from all shell scripts and Python files
+# (safety net in case source files are ever edited on Windows again)
+RUN find /app -type f \( -name "*.sh" -o -name "*.py" \) -exec sed -i 's/\r$//' {} +
+
 RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 5523

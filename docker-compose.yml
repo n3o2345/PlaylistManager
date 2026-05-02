@@ -1,8 +1,9 @@
 services:
   fastchannelsv2:
-    build: .
+    image: fastchannelsv2:latest
     container_name: fastchannelsv2
     restart: unless-stopped
+    pull_policy: never
     ports:
       - "5523:5523"
     volumes:
