@@ -1,19 +1,15 @@
 services:
   fastchannelsv2:
-    image: fastchannelsv2:latest
+    image: ghcr.io/n3o2345/fastchannelsv2:latest
     container_name: fastchannelsv2
     restart: unless-stopped
-    pull_policy: never
     ports:
       - "5523:5523"
     volumes:
-      - db_data:/data
+      - /mnt/{your_mount_point}/db_data:/data
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:5523/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 180s
-
-volumes:
-  db_data:
