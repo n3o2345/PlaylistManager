@@ -431,7 +431,12 @@ def _rewrite_media_playlist(text: str, playlist_url: str) -> str:
     for line in text.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith('#'):
+            # Rewrite segment URLs (relative or absolute) to absolute
             line = urljoin(playlist_url, stripped)
+        elif stripped.startswith('#EXT-X-MAP'):
+            # EXT-X-MAP carries the codec init segment URI — must be absolute
+            # or clients lose video at discontinuity/ad boundaries
+            line = _rewrite_uri_attrs(line, playlist_url)
         elif stripped.startswith('#') and 'URI="' in stripped:
             line = _rewrite_uri_attrs(line, playlist_url)
         lines.append(line)
