@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_REPOSITORY: fastchannels
+  IMAGE_REPOSITORY: fastchannelsv2
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
