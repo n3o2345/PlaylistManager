@@ -538,16 +538,35 @@ class PlutoScraper(BaseScraper):
     def resolve(self, raw_url: str) -> str:
         if not raw_url.startswith('pluto://'):
             return raw_url
-        remainder    = raw_url[len('pluto://'):]
+        remainder = raw_url[len('pluto://'):]
         country_code, watch_id = remainder.split('/', 1) if '/' in remainder else ('us_east', remainder)
+
+        # Reuse a cached stitcher URL if resolved recently (within 3 minutes).
+        # Pluto tokens are valid for hours; re-booting on every HLS segment
+        # refresh (~every 6s) floods boot.pluto.tv and causes stream freezes.
+        cache_key = f'_pluto_url_{watch_id}'
+        cache_ts_key = f'_pluto_url_ts_{watch_id}'
+        cached_url = self.config.get(cache_key)
+        cached_ts = self.config.get(cache_ts_key)
+        if cached_url and cached_ts:
+            try:
+                age = datetime.now(pytz.utc).timestamp() - float(cached_ts)
+                if age < 180:
+                    return cached_url
+            except Exception:
+                pass
+
         slot = self._next_slot()
         resp, err = slot.boot(country_code)
         if err:
             logger.error("[pluto] resolve boot failed for %s: %s", country_code, err)
             return raw_url
-        token           = resp.get('sessionToken', '')
+        token = resp.get('sessionToken', '')
         stitcher_params = resp.get('stitcherParams', '')
-        return (
+        resolved = (
             f"{STITCHER}/v2/stitch/hls/channel/{watch_id}/master.m3u8"
             f"?{stitcher_params}&jwt={token}&masterJWTPassthrough=true&includeExtendedEvents=true"
         )
+        self._update_config(cache_key, resolved)
+        self._update_config(cache_ts_key, str(datetime.now(pytz.utc).timestamp()))
+        return resolved
