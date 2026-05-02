@@ -19,7 +19,7 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 RUN playwright install-deps chromium && playwright install chromium
 
 COPY . .
-
+COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 5523
