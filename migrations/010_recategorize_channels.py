@@ -15,7 +15,7 @@ Fixes channels that landed in the wrong bucket after 009's normalization:
  - Misc obvious name-based corrections
 
 Run:
-    docker exec fastchannels python /app/migrations/010_recategorize_channels.py
+    docker exec fastchannelsv2 python /app/migrations/010_recategorize_channels.py
 """
 import sqlite3, sys, pathlib
 

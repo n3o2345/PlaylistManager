@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import time
+from pathlib import Path
+from typing import Callable, TextIO
+
+
+_CACHE_ROOT = Path(os.environ.get('FASTCHANNELS_XML_CACHE_DIR', '/data/cache/xml'))
+_GLOBAL_XML_STALE = _CACHE_ROOT / '.xml-stale'
+_LOCK_STALE_SECONDS = 600
+
+
+def _ensure_cache_dir() -> None:
+    _CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _cache_path(cache_key: str, ext: str = 'xml') -> Path:
+    safe_key = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in cache_key)
+    return _CACHE_ROOT / f'{safe_key}.{ext}'
+
+
+def _xml_stale_path(cache_key: str) -> Path:
+    return _cache_path(cache_key, ext='xml.stale')
+
+
+def _xml_lock_path(cache_key: str) -> Path:
+    return _cache_path(cache_key, ext='xml.lock')
+
+
+def _xml_tmp_glob(cache_key: str) -> list[Path]:
+    """Return all orphaned temp files for this cache key."""
+    path = _cache_path(cache_key, ext='xml')
+    return list(path.parent.glob(path.name + '.*.tmp'))
+
+
+def _touch(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+
+
+def get_or_build(cache_key: str, builder: Callable[[], str], ext: str = 'xml') -> str:
+    """Return cached content, building and persisting it if missing.
+
+    Multiple workers may build simultaneously on a cold cache — that's fine.
+    The atomic tmp→rename write ensures clients never see a partial file.
+    """
+    _ensure_cache_dir()
+    path = _cache_path(cache_key, ext)
+    if path.exists():
+        return path.read_text(encoding='utf-8')
+    content = builder()
+    fd, tmp_str = tempfile.mkstemp(dir=path.parent, prefix=path.name + '.', suffix='.tmp')
+    tmp = Path(tmp_str)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fp:
+            fp.write(content)
+        tmp.replace(path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    return content
+
+
+def get_or_build_xml(cache_key: str, builder: Callable[[], str]) -> str:
+    return get_or_build(cache_key, builder, ext='xml')
+
+
+def _xml_is_stale(cache_key: str, path: Path) -> bool:
+    if not path.exists():
+        return True
+    file_mtime = path.stat().st_mtime
+    key_stale = _xml_stale_path(cache_key)
+    if key_stale.exists() and key_stale.stat().st_mtime >= file_mtime:
+        return True
+    return _GLOBAL_XML_STALE.exists() and _GLOBAL_XML_STALE.stat().st_mtime >= file_mtime
+
+
+def _clear_xml_stale(cache_key: str) -> None:
+    _xml_stale_path(cache_key).unlink(missing_ok=True)
+
+
+def xml_artifact_path(cache_key: str) -> Path:
+    return _cache_path(cache_key, ext='xml')
+
+
+def artifact_path(cache_key: str, *, ext: str) -> Path:
+    return _cache_path(cache_key, ext=ext)
+
+
+def get_xml_artifact(cache_key: str) -> tuple[Path | None, bool]:
+    """Return `(path, stale)` for the current XML artifact without rebuilding it."""
+    _ensure_cache_dir()
+    path = xml_artifact_path(cache_key)
+    if not path.exists():
+        return None, True
+    return path, _xml_is_stale(cache_key, path)
+
+
+def get_artifact(cache_key: str, *, ext: str) -> Path | None:
+    _ensure_cache_dir()
+    path = artifact_path(cache_key, ext=ext)
+    if not path.exists():
+        return None
+    return path
+
+
+def mark_xml_stale(cache_key: str | None = None) -> None:
+    _ensure_cache_dir()
+    if cache_key is None:
+        _touch(_GLOBAL_XML_STALE)
+    else:
+        _touch(_xml_stale_path(cache_key))
+
+
+def write_xml_artifact(cache_key: str, writer: Callable[[TextIO], None]) -> Path:
+    _ensure_cache_dir()
+    path = _cache_path(cache_key, ext='xml')
+    fd, tmp_str = tempfile.mkstemp(dir=path.parent, prefix=path.name + '.', suffix='.tmp')
+    tmp = Path(tmp_str)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fp:
+            writer(fp)
+        tmp.replace(path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    _clear_xml_stale(cache_key)
+    return path
+
+
+def write_artifact(cache_key: str, writer: Callable[[TextIO], None], *, ext: str) -> Path:
+    _ensure_cache_dir()
+    path = _cache_path(cache_key, ext=ext)
+    fd, tmp_str = tempfile.mkstemp(dir=path.parent, prefix=path.name + '.', suffix='.tmp')
+    tmp = Path(tmp_str)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fp:
+            writer(fp)
+        tmp.replace(path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def delete_xml_artifact(cache_key: str) -> int:
+    removed = 0
+    for path in (
+        _cache_path(cache_key, ext='xml'),
+        _cache_path(cache_key, ext='m3u'),
+        _xml_stale_path(cache_key),
+        _xml_lock_path(cache_key),
+    ):
+        if path.exists():
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
+def ensure_xml_artifact(cache_key: str, writer: Callable[[TextIO], None], *, wait_if_locked: bool = True) -> Path:
+    """Return the XML artifact path, rebuilding if missing or stale.
+
+    Stale files remain serveable while another process refreshes the artifact.
+    """
+    _ensure_cache_dir()
+    path = _cache_path(cache_key, ext='xml')
+    if not _xml_is_stale(cache_key, path):
+        return path
+
+    lock = _xml_lock_path(cache_key)
+    lock_fd = None
+
+    def _clear_stale_lock_if_needed() -> None:
+        if not lock.exists():
+            return
+        try:
+            age = time.time() - lock.stat().st_mtime
+        except OSError:
+            return
+        if age < _LOCK_STALE_SECONDS:
+            return
+        lock.unlink(missing_ok=True)
+        for _stale_tmp in _xml_tmp_glob(cache_key):
+            _stale_tmp.unlink(missing_ok=True)
+
+    _clear_stale_lock_if_needed()
+    try:
+        lock_fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        _clear_stale_lock_if_needed()
+        try:
+            lock_fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            pass
+    if lock_fd is None:
+        if path.exists():
+            return path
+        if not wait_if_locked:
+            raise
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if path.exists() and not _xml_is_stale(cache_key, path):
+                return path
+            time.sleep(0.05)
+        if path.exists():
+            return path
+        raise TimeoutError(f'timed out waiting for XML artifact {cache_key}')
+
+    try:
+        return write_xml_artifact(cache_key, writer)
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        lock.unlink(missing_ok=True)
+
+
+def invalidate_xml_cache(cache_key: str | None = None) -> int:
+    # M3U files are intentionally NOT deleted here.  Deleting them causes a
+    # gap between invalidation and the async refresh job completing, during
+    # which every request returns a 503 "warming up".  Instead the old M3U
+    # stays on disk and keeps being served until the refresh job atomically
+    # overwrites it — the same stale-but-available behaviour XML uses.
+    if cache_key is not None:
+        mark_xml_stale(cache_key)
+    else:
+        mark_xml_stale()
+    return 0

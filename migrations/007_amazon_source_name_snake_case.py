@@ -2,7 +2,7 @@
 Migration 007 — rename Amazon Prime Free source id to snake_case.
 
 Run with:
-    docker exec fastchannels python /app/migrations/007_amazon_source_name_snake_case.py
+    docker exec fastchannelsv2 python /app/migrations/007_amazon_source_name_snake_case.py
 """
 import json
 import sqlite3

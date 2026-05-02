@@ -4,7 +4,7 @@ Migration 009 — normalize channel categories to canonical list.
 Collapses ~80 raw category variants down to 34 canonical labels.
 
 Run:
-    docker exec fastchannels python /app/migrations/009_normalize_categories.py
+    docker exec fastchannelsv2 python /app/migrations/009_normalize_categories.py
 """
 import sqlite3, sys, pathlib
 

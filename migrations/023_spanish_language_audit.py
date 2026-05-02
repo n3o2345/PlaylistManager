@@ -9,7 +9,7 @@ Two classes of fix:
    by scrapers that didn't recognise the name — set language='es' for those rows.
 
 Run:
-    docker exec fastchannels python /app/migrations/023_spanish_language_audit.py
+    docker exec fastchannelsv2 python /app/migrations/023_spanish_language_audit.py
 """
 import sqlite3, sys, pathlib
 

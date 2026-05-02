@@ -13,7 +13,7 @@ Fixes channels that landed in the wrong bucket or were left as NULL:
  - Zona TUDN: Latino → Sports (sports channel, not language bucket)
 
 Run:
-    docker exec fastchannels python /app/migrations/022_recategorize_channels_2.py
+    docker exec fastchannelsv2 python /app/migrations/022_recategorize_channels_2.py
 """
 import sqlite3, sys, pathlib
 

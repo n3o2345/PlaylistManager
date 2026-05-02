@@ -1,9 +1,9 @@
 version: '3.9'
 
 services:
-  fastchannels:
-    image: ghcr.io/${GHCR_OWNER:-kineticman}/fastchannels:${FASTCHANNELS_IMAGE_TAG:-latest}
-    container_name: fastchannels
+  fastchannelsv2:
+    image: ghcr.io/${GHCR_OWNER:-kineticman}/fastchannelsv2:${FASTCHANNELSV2_IMAGE_TAG:-latest}
+    container_name: fastchannelsv2
     restart: unless-stopped
     ports:
       - "5523:5523"

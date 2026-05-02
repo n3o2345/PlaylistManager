@@ -1,0 +1,288 @@
+import hashlib
+import json
+import logging
+from datetime import datetime, timezone
+from flask import current_app
+import redis
+from rq import Queue
+from rq.job import Job
+from rq.registry import StartedJobRegistry
+
+logger = logging.getLogger(__name__)
+_STALE_STARTED_JOB_GRACE_SECONDS = 300
+
+
+def get_queue():
+    r = redis.from_url(current_app.config['REDIS_URL'])
+    return Queue('scraper', connection=r)
+
+
+def get_fast_queue():
+    r = redis.from_url(current_app.config['REDIS_URL'])
+    return Queue('fast', connection=r)
+
+
+def get_maintenance_queue():
+    r = redis.from_url(current_app.config['REDIS_URL'])
+    return Queue('maintenance', connection=r)
+
+
+def _utc_aware(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _cleanup_stale_started_job(q: Queue, job_id: str) -> bool:
+    registry = StartedJobRegistry(q.name, connection=q.connection)
+    if job_id not in registry:
+        return False
+    try:
+        job = Job.fetch(job_id, connection=q.connection)
+    except Exception:
+        registry.remove(job_id)
+        logger.warning('Removed stale started-job marker for missing job %s', job_id)
+        return True
+
+    if job.get_status(refresh=False) != 'started':
+        registry.remove(job)
+        try:
+            job.delete()
+        except Exception:
+            pass
+        logger.warning('Removed stale started-job marker for non-started job %s', job_id)
+        return True
+
+    now = datetime.now(timezone.utc)
+    started_at = _utc_aware(getattr(job, 'started_at', None))
+    last_heartbeat = _utc_aware(getattr(job, 'last_heartbeat', None))
+    heartbeat_age = (now - last_heartbeat).total_seconds() if last_heartbeat else None
+    started_age = (now - started_at).total_seconds() if started_at else None
+
+    if heartbeat_age is not None and heartbeat_age > _STALE_STARTED_JOB_GRACE_SECONDS:
+        registry.remove(job)
+        try:
+            job.delete()
+        except Exception:
+            pass
+        logger.warning(
+            'Removed stale started job %s after %.0fs without heartbeat',
+            job_id,
+            heartbeat_age,
+        )
+        return True
+
+    if last_heartbeat is None and started_age is not None and started_age > _STALE_STARTED_JOB_GRACE_SECONDS:
+        registry.remove(job)
+        try:
+            job.delete()
+        except Exception:
+            pass
+        logger.warning(
+            'Removed stale started job %s after %.0fs without heartbeat metadata',
+            job_id,
+            started_age,
+        )
+        return True
+
+    return False
+
+
+def _job_already_active(q: Queue, job_id: str) -> bool:
+    if not job_id:
+        return False
+    _cleanup_stale_started_job(q, job_id)
+    registries = (
+        q.get_job_ids(),
+        StartedJobRegistry(q.name, connection=q.connection).get_job_ids(),
+    )
+    for job_ids in registries:
+        if job_id in job_ids:
+            return True
+    try:
+        job = Job.fetch(job_id, connection=q.connection)
+    except Exception:
+        return False
+    status = job.get_status(refresh=False)
+    # Job hash exists with 'started' status but is not in any registry — zombie from
+    # a dead worker that was already removed from StartedJobRegistry. Delete it so a
+    # fresh job can be enqueued.
+    if status == 'started':
+        try:
+            job.delete()
+        except Exception:
+            pass
+        logger.warning('Deleted zombie job %s (started status, not in any registry)', job_id)
+        return False
+    return status in {'queued', 'deferred', 'scheduled'}
+
+
+def _bulk_job_id(filters: dict, enable: bool) -> str:
+    payload = {
+        'action': 'enable' if enable else 'disable',
+        'filters': filters or {},
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+    digest = hashlib.sha1(raw.encode('utf-8')).hexdigest()[:16]
+    return f'channel-bulk-{digest}'
+
+
+def trigger_scrape(source_name: str, *, force_full: bool = False):
+    try:
+        q = get_queue()
+        job_id = f'scrape-{source_name}'
+        if _job_already_active(q, job_id):
+            logger.info('Scrape already queued/running for %s', source_name)
+            return
+        q.enqueue('app.worker.run_scraper', source_name, force_full, job_timeout=3600, job_id=job_id)
+        logger.info('Enqueued scrape for %s%s', source_name, ' (force full)' if force_full else '')
+    except Exception as e:
+        logger.warning(f'RQ unavailable ({e}), falling back to thread for {source_name}')
+        import threading
+        from app.worker import run_scraper
+        threading.Thread(target=run_scraper, args=(source_name, force_full), daemon=True).start()
+
+
+def trigger_stream_audit(source_name: str, include_inactive: bool = False):
+    try:
+        q = get_queue()
+        job_id = f'audit-{source_name}'
+        if _job_already_active(q, job_id):
+            logger.info('Stream audit already queued/running for %s', source_name)
+            return
+        q.enqueue('app.worker.run_stream_audit', source_name, include_inactive, job_timeout=1800, job_id=job_id)
+        logger.info(f'Enqueued stream audit for {source_name} (include_inactive={include_inactive})')
+    except Exception as e:
+        logger.warning(f'RQ unavailable ({e}), falling back to thread for {source_name}')
+        import threading
+        from app.worker import run_stream_audit
+        threading.Thread(target=run_stream_audit, args=(source_name, include_inactive), daemon=True).start()
+
+
+def trigger_stream_audit_recheck(source_name: str, channel_ids: list):
+    try:
+        q = get_queue()
+        job_id = f'audit-recheck-{source_name}'
+        if _job_already_active(q, job_id):
+            logger.info('Stream audit recheck already queued/running for %s', source_name)
+            return
+        q.enqueue('app.worker.run_stream_audit_recheck', source_name, channel_ids, job_timeout=600, job_id=job_id)
+        logger.info(f'Enqueued stream audit recheck for {source_name} ({len(channel_ids)} channels)')
+    except Exception as e:
+        logger.warning(f'RQ unavailable ({e}), falling back to thread for {source_name}')
+        import threading
+        from app.worker import run_stream_audit_recheck
+        threading.Thread(target=run_stream_audit_recheck, args=(source_name, channel_ids), daemon=True).start()
+
+
+def trigger_xml_refresh():
+    try:
+        q = get_fast_queue()
+        job_id = 'xml-refresh'
+        # Atomic debounce: SET NX with 10s TTL prevents the check-then-enqueue
+        # race when many feed requests arrive simultaneously (e.g. DVR polling).
+        acquired = q.connection.set(f'lock:{job_id}', '1', nx=True, ex=10)
+        if not acquired:
+            logger.info('XML artifact refresh already queued/running')
+            return
+        if _job_already_active(q, job_id):
+            logger.info('XML artifact refresh already queued/running')
+            return
+        q.enqueue('app.worker.run_xml_refresh', job_timeout=1800, job_id=job_id)
+        logger.info('Enqueued XML artifact refresh')
+    except Exception as e:
+        logger.warning(f'RQ unavailable ({e}), falling back to thread for XML refresh')
+        import threading
+        from app.worker import run_xml_refresh
+        threading.Thread(target=run_xml_refresh, daemon=True).start()
+
+
+def trigger_source_channel_purge(source_id: int):
+    try:
+        q = get_maintenance_queue()
+        job_id = f'source-purge-{source_id}'
+        if _job_already_active(q, job_id):
+            logger.info('Source channel purge already queued/running for source_id=%s', source_id)
+            return
+        q.enqueue('app.worker.run_source_channel_purge', source_id, job_timeout=1800, job_id=job_id)
+        logger.info('Enqueued source channel purge for source_id=%s', source_id)
+    except Exception as e:
+        logger.warning(f'RQ unavailable ({e}), falling back to thread for source purge {source_id}')
+        import threading
+        from app.worker import run_source_channel_purge
+        threading.Thread(target=run_source_channel_purge, args=(source_id,), daemon=True).start()
+
+
+def trigger_bulk_channel_update(filters: dict, enable: bool):
+    try:
+        q = get_maintenance_queue()
+        job_id = _bulk_job_id(filters or {}, enable)
+        if _job_already_active(q, job_id):
+            logger.info(
+                'Bulk channel %s already queued/running',
+                'enable' if enable else 'disable',
+            )
+            return
+        q.enqueue(
+            'app.worker.run_bulk_channel_update',
+            filters or {},
+            enable,
+            job_timeout=1800,
+            job_id=job_id,
+        )
+        logger.info('Enqueued bulk channel %s', 'enable' if enable else 'disable')
+    except Exception as e:
+        logger.warning(f'RQ unavailable ({e}), falling back to thread for bulk channel update')
+        import threading
+        from app.worker import run_bulk_channel_update
+        threading.Thread(target=run_bulk_channel_update, args=(filters or {}, enable), daemon=True).start()
+
+
+def trigger_gracenote_auto_clear():
+    try:
+        q = get_maintenance_queue()
+        job_id = 'gracenote-auto-clear'
+        if _job_already_active(q, job_id):
+            logger.info('Gracenote auto-clear already queued/running')
+            return
+        q.enqueue('app.worker.run_gracenote_auto_clear', job_timeout=300, job_id=job_id)
+        logger.info('Enqueued gracenote auto-clear')
+    except Exception as e:
+        logger.warning(f'RQ unavailable ({e}), falling back to thread for gracenote auto-clear')
+        import threading
+        from app.worker import run_gracenote_auto_clear
+        threading.Thread(target=run_gracenote_auto_clear, daemon=True).start()
+
+
+def trigger_channel_auto_disable(channel_id: int, reason: str):
+    try:
+        q = get_fast_queue()
+        job_id = f'channel-auto-disable-{channel_id}'
+        if _job_already_active(q, job_id):
+            logger.info('Channel auto-disable already queued/running for channel_id=%s', channel_id)
+            return
+        q.enqueue('app.worker.run_channel_auto_disable', channel_id, reason, job_timeout=300, job_id=job_id)
+        logger.info('Enqueued channel auto-disable for channel_id=%s', channel_id)
+    except Exception as e:
+        logger.warning(f'RQ unavailable ({e}), falling back to thread for channel auto-disable {channel_id}')
+        import threading
+        from app.worker import run_channel_auto_disable
+        threading.Thread(target=run_channel_auto_disable, args=(channel_id, reason), daemon=True).start()
+
+
+def trigger_tvtv_cache_refresh():
+    try:
+        q = get_maintenance_queue()
+        job_id = 'tvtv-cache-refresh'
+        if _job_already_active(q, job_id):
+            logger.info('tvtv cache refresh already queued/running')
+            return
+        q.enqueue('app.worker.run_tvtv_cache_refresh', job_timeout=1800, job_id=job_id)
+        logger.info('Enqueued tvtv cache refresh')
+    except Exception as e:
+        logger.warning(f'RQ unavailable ({e}), falling back to thread for tvtv cache refresh')
+        import threading
+        from app.worker import run_tvtv_cache_refresh
+        threading.Thread(target=run_tvtv_cache_refresh, daemon=True).start()

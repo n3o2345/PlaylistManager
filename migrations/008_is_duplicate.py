@@ -5,7 +5,7 @@ Marks a channel as a manual duplicate without disabling it.
 Used by the admin UI to label channels for filtering purposes only.
 
 Run:
-    docker exec fastchannels python /app/migrations/008_is_duplicate.py
+    docker exec fastchannelsv2 python /app/migrations/008_is_duplicate.py
 """
 import sqlite3, sys, pathlib
 

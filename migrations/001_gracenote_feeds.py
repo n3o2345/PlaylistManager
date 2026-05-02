@@ -1,6 +1,6 @@
 """
 One-time migration: add gracenote_id to channels, fix feeds table schema.
-Run with: docker exec fastchannels python /app/migrate.py
+Run with: docker exec fastchannelsv2 python /app/migrate.py
 Safe to re-run — checks before altering anything.
 """
 import sqlite3

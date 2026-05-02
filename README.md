@@ -1,4 +1,4 @@
-# FastChannels
+# FastChannelsv2
 
 FAST channel aggregator — scrapes Pluto TV, Tubi, Roku, Samsung TV Plus, Sling Freestream, Plex, DistroTV, Xumo, and more, then outputs M3U playlists and XMLTV EPG guides for use in any IPTV player (Jellyfin, Plex, Channels DVR, TiviMate, etc.).
 
@@ -8,9 +8,9 @@ In Portainer, create a new stack and paste this:
 
 ```yaml
 services:
-  fastchannels:
-    image: ghcr.io/kineticman/fastchannels:latest
-    container_name: fastchannels
+  fastchannelsv2:
+    image: ghcr.io/kineticman/fastchannelsv2:latest
+    container_name: fastchannelsv2
     restart: unless-stopped
     ports:
       - "5523:5523"
@@ -31,11 +31,11 @@ volumes:
 
 ```bash
 docker run -d \
-  --name fastchannels \
+  --name fastchannelsv2 \
   --restart unless-stopped \
   -p 5523:5523 \
-  -v fastchannels_data:/data \
-  ghcr.io/kineticman/fastchannels:latest
+  -v fastchannelsv2_data:/data \
+  ghcr.io/kineticman/fastchannelsv2:latest
 ```
 
 Then open `http://localhost:5523/admin/`.

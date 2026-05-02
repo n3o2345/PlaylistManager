@@ -5,7 +5,7 @@ Stores the Channels DVR server base URL (e.g. http://192.168.1.x:8089)
 so feeds can be pushed to DVR as custom M3U sources with one click.
 
 Run:
-    docker exec fastchannels python /app/migrations/005_channels_dvr_url.py
+    docker exec fastchannelsv2 python /app/migrations/005_channels_dvr_url.py
 """
 import sqlite3, sys, pathlib
 

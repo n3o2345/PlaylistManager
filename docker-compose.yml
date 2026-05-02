@@ -1,7 +1,7 @@
 services:
-  fastchannels:
+  fastchannelsv2:
     build: .
-    container_name: fastchannels
+    container_name: fastchannelsv2
     restart: unless-stopped
     ports:
       - "5523:5523"

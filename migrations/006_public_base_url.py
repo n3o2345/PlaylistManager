@@ -2,7 +2,7 @@
 Migration 006 — add public_base_url to app_settings.
 
 Run with:
-    docker exec fastchannels python /app/migrations/006_public_base_url.py
+    docker exec fastchannelsv2 python /app/migrations/006_public_base_url.py
 """
 import sqlite3
 

@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sources — FastChannels</title>
+  <title>Sources â€” FastChannels</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -47,7 +47,7 @@
     .overlap-banner strong { display: block; margin-bottom: 0.4rem; font-size: 0.9rem; }
     .overlap-banner ul { margin: 0; padding-left: 1.25rem; font-size: 0.82rem; line-height: 1.7; }
 
-    /* ── Dashboard table ────────────────────────────────────────── */
+    /* â”€â”€ Dashboard table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     .dashboard-panel {
       background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
       overflow: hidden; margin-bottom: 2rem;
@@ -190,7 +190,7 @@
 
     .dash-actions { display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 
-    /* ── Config panel (inline table row) ──────────────────────────── */
+    /* â”€â”€ Config panel (inline table row) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     .config-panel-row { background: var(--bg); }
     .config-panel-row td { padding: 0; border-bottom: 1px solid var(--border); }
     .config-panel { padding: 1.25rem 1.5rem; }
@@ -374,7 +374,7 @@
 </head>
 <body>
   <nav>
-    <h1>⚡ FastChannels</h1>
+    <h1>âš¡ FastChannels</h1>
     <a href="/admin/">Dashboard</a>
     <a href="/admin/sources" class="active">Sources</a>
     <a href="/admin/channels">Channels</a>
@@ -383,19 +383,19 @@
     <a href="/admin/logs">Logs</a>
     <a href="/admin/help">Help</a>
     {% include 'admin/_theme_toggle.html' %}
-    {% if update_status.update_available %}<span class="version" style="cursor:pointer" onclick="openUpdateModal()" title="Update available: v{{ update_status.latest_version }}">v{{ app_version }}<span class="update-pip"></span></span>{% else %}<a class="version" href="{{ update_status.latest_url or 'https://github.com/kineticman/FastChannels' }}" target="_blank" rel="noopener noreferrer" title="View FastChannels on GitHub">v{{ app_version }}</a>{% endif %}
+    {% if update_status.update_available %}<span class="version" style="cursor:pointer" onclick="openUpdateModal()" title="Update available: v{{ update_status.latest_version }}">v{{ app_version }}<span class="update-pip"></span></span>{% else %}<a class="version" href="{{ update_status.latest_url or 'https://github.com/kineticman/FastChannelsv2' }}" target="_blank" rel="noopener noreferrer" title="View FastChannels on GitHub">v{{ app_version }}</a>{% endif %}
   </nav>
 
   <div class="container">
 
     {% if needs_config %}
     <div class="needs-config-banner" id="needs-config-banner">
-      <strong>⚠ {{ needs_config | length }} source{{ 's' if needs_config | length != 1 else '' }} need{{ '' if needs_config | length != 1 else 's' }} configuration before scraping will return channels</strong>
+      <strong>âš  {{ needs_config | length }} source{{ 's' if needs_config | length != 1 else '' }} need{{ '' if needs_config | length != 1 else 's' }} configuration before scraping will return channels</strong>
       <ul>
         {% for s in needs_config %}
         <li id="needs-config-item-{{ s.id }}">
           <a href="#" onclick="scrollToConfig({{ s.id }}); return false;">{{ s.display_name }}</a>
-          — click to configure
+          â€” click to configure
         </li>
         {% endfor %}
       </ul>
@@ -416,7 +416,7 @@
 
     {% if chnum_warnings %}
     <div class="overlap-banner" id="overlap-banner">
-      <strong>⚠ Channel number overlaps detected across generated M3U outputs</strong>
+      <strong>âš  Channel number overlaps detected across generated M3U outputs</strong>
       <ul>
         {% for w in chnum_warnings %}<li>{{ w }}</li>{% endfor %}
       </ul>
@@ -440,11 +440,11 @@
             <td class="col-source">
               <div class="source-name-wrap">
                 <span class="source-name">{{ source.display_name }}</span>
-                {% if source.last_error %}<span class="err-pip" title="{{ source.last_error }}">⚠</span>{% endif %}
+                {% if source.last_error %}<span class="err-pip" title="{{ source.last_error }}">âš </span>{% endif %}
                 {% if cfg_status == 'configured' %}
                   <span class="config-badge configured" id="config-badge-{{ source.id }}">Configured</span>
                 {% elif cfg_status == 'required' %}
-                  <span class="config-badge needs-config" id="config-badge-{{ source.id }}">⚠ Needs Config</span>
+                  <span class="config-badge needs-config" id="config-badge-{{ source.id }}">âš  Needs Config</span>
                 {% elif cfg_status == 'optional' %}
                   <span class="config-badge anon" id="config-badge-{{ source.id }}">Optional</span>
                 {% else %}
@@ -453,9 +453,9 @@
               </div>
               <div class="source-meta" id="source-meta-{{ source.id }}">
                 <span id="ch-count-{{ source.id }}">{{ source.to_dict().channel_count }}</span> channels
-                &nbsp;·&nbsp; Every <span id="scrape-interval-display-{{ source.id }}">{{ source.scrape_interval }}</span> min
-                &nbsp;·&nbsp; Last scraped: {{ source.last_scraped_at | localtime }}
-                {% if source.last_audited_at %}&nbsp;·&nbsp; Audited: {{ source.last_audited_at | localtime }}{% endif %}
+                &nbsp;Â·&nbsp; Every <span id="scrape-interval-display-{{ source.id }}">{{ source.scrape_interval }}</span> min
+                &nbsp;Â·&nbsp; Last scraped: {{ source.last_scraped_at | localtime }}
+                {% if source.last_audited_at %}&nbsp;Â·&nbsp; Audited: {{ source.last_audited_at | localtime }}{% endif %}
               </div>
               <div class="scrape-status" id="scrape-status-{{ source.id }}"></div>
               <div class="audit-status" id="audit-status-{{ source.id }}"></div>
@@ -489,7 +489,7 @@
                         {% if not source.is_enabled %}disabled{% endif %}>Audit</button>
                 {% endif %}
                 <button class="btn btn-configure btn-sm" id="configure-btn-{{ source.id }}"
-                        onclick="toggleConfigPanel({{ source.id }})">Configure ▾</button>
+                        onclick="toggleConfigPanel({{ source.id }})">Configure â–¾</button>
               </div>
             </td>
           </tr>
@@ -502,7 +502,7 @@
                    data-config-required="{{ 'true' if config_required.get(source.name) else 'false' }}">
 
                 {% if source.name in ('amazon_prime_free', 'sling') %}
-                <div class="drm-note">⚠ All streams from this source are DRM-protected and will not play on most clients.</div>
+                <div class="drm-note">âš  All streams from this source are DRM-protected and will not play on most clients.</div>
                 {% endif %}
 
                 {% set interval_meta = source_interval_meta.get(source.name, {'recommended': source.scrape_interval, 'min': 30, 'max': 10080}) %}
@@ -520,7 +520,7 @@
                           id="scrape-interval-save-{{ source.id }}"
                           onclick="saveScrapeInterval({{ source.id }})"
                           {% if not source.is_enabled %}disabled{% endif %}>Save</button>
-                  <div class="help">Recommended {{ interval_meta.recommended }} min · allowed {{ interval_meta.min }}–{{ interval_meta.max }} min.</div>
+                  <div class="help">Recommended {{ interval_meta.recommended }} min Â· allowed {{ interval_meta.min }}â€“{{ interval_meta.max }} min.</div>
                 </div>
 
                 <div class="delete-inactive-row">
@@ -543,7 +543,7 @@
   <div class="modal-overlay" id="audit-modal" onclick="closeAuditModal(event)">
     <div class="modal-box audit-modal-box">
       <div id="audit-modal-content" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
-        <div class="modal-loading">Loading…</div>
+        <div class="modal-loading">Loadingâ€¦</div>
       </div>
     </div>
   </div>
@@ -563,11 +563,11 @@
   </div>
 
   <script>
-    const MASK = '••••••••';
+    const MASK = 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢';
     let _pendingSourceId   = null;
     let _pendingCheckbox   = null;
 
-    // ── Config panel expand/collapse ─────────────────────────────────────
+    // â”€â”€ Config panel expand/collapse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function toggleConfigPanel(sourceId) {
       const row = document.getElementById(`config-panel-row-${sourceId}`);
       const btn = document.getElementById(`configure-btn-${sourceId}`);
@@ -575,7 +575,7 @@
       const isOpen = row.style.display !== 'none';
       row.style.display = isOpen ? 'none' : '';
       if (btn) {
-        btn.textContent = isOpen ? 'Configure ▾' : 'Configure ▴';
+        btn.textContent = isOpen ? 'Configure â–¾' : 'Configure â–´';
         btn.classList.toggle('open', !isOpen);
       }
       if (!isOpen) {
@@ -594,7 +594,7 @@
       toggleConfigPanel(sourceId);
     }
 
-    // ── Scrape interval ──────────────────────────────────────────────────
+    // â”€â”€ Scrape interval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function saveScrapeInterval(sourceId) {
       const input = document.getElementById(`scrape-interval-${sourceId}`);
       const saveBtn = document.getElementById(`scrape-interval-save-${sourceId}`);
@@ -603,7 +603,7 @@
       if (!Number.isFinite(value)) return;
       saveBtn.disabled = true;
       const prevText = saveBtn.textContent;
-      saveBtn.textContent = 'Saving…';
+      saveBtn.textContent = 'Savingâ€¦';
       try {
         const r = await fetch(`/api/sources/${sourceId}`, {
           method: 'PATCH',
@@ -623,14 +623,14 @@
       }
     }
 
-    // ── Force refresh ─────────────────────────────────────────────────────
+    // â”€â”€ Force refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function forceCompleteRefresh() {
       if (!confirm('Force a complete refresh for all enabled sources? This clears the last scrape time and queues a full channel + guide refresh for each enabled source.')) return;
       const btn = document.getElementById('force-refresh-btn');
       const status = document.getElementById('global-status');
       btn.disabled = true;
-      btn.textContent = 'Queuing…';
-      status.textContent = 'Queuing full refresh for enabled sources…';
+      btn.textContent = 'Queuingâ€¦';
+      status.textContent = 'Queuing full refresh for enabled sourcesâ€¦';
       status.className = 'global-status';
       try {
         const r = await fetch('/api/sources/force-refresh', { method: 'POST' });
@@ -660,7 +660,7 @@
       const btn = document.getElementById('audit-all-btn');
       const status = document.getElementById('global-status');
       btn.disabled = true;
-      btn.textContent = 'Queuing…';
+      btn.textContent = 'Queuingâ€¦';
       status.textContent = '';
       status.className = 'global-status';
       try {
@@ -683,7 +683,7 @@
       }
     }
 
-    // ── Source enable/disable ─────────────────────────────────────────────
+    // â”€â”€ Source enable/disable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function onSourceToggle(sourceId, sourceName, checkbox) {
       if (!checkbox.checked) {
         checkbox.checked = true;
@@ -756,16 +756,16 @@
       }
     }
 
-    // ── Scrape now ────────────────────────────────────────────────────────
+    // â”€â”€ Scrape now â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function run(id, btn) {
       if (_pollTimers[id]) return;
       btn.disabled = true;
-      btn.textContent = 'Queued…';
+      btn.textContent = 'Queuedâ€¦';
       try {
         const r = await fetch(`/api/sources/${id}/run`, {method: 'POST'});
         const d = await r.json();
         if (d.status === 'queued') {
-          btn.textContent = 'Running…';
+          btn.textContent = 'Runningâ€¦';
           _scrapeStart[id] = Date.now();
           _startPolling(id, btn);
         } else {
@@ -781,12 +781,12 @@
     async function forceRefreshSource(id, btn) {
       if (_pollTimers[id]) return;
       btn.disabled = true;
-      btn.textContent = 'Queued…';
+      btn.textContent = 'Queuedâ€¦';
       try {
         const r = await fetch(`/api/sources/${id}/force-full`, {method: 'POST'});
         const d = await r.json();
         if (d.status === 'queued') {
-          btn.textContent = 'Running…';
+          btn.textContent = 'Runningâ€¦';
           _scrapeStart[id] = Date.now();
           _startPolling(id, btn);
         } else {
@@ -799,7 +799,7 @@
       }
     }
 
-    // ── Audit modal ───────────────────────────────────────────────────────
+    // â”€â”€ Audit modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let _auditModalSourceId   = null;
     let _auditModalSourceName = '';
     let _auditModalPollTimer  = null;
@@ -812,7 +812,7 @@
       if (_auditModalPollTimer) { clearTimeout(_auditModalPollTimer); _auditModalPollTimer = null; }
       const modal   = document.getElementById('audit-modal');
       const content = document.getElementById('audit-modal-content');
-      content.innerHTML = '<div class="modal-loading">Loading…</div>';
+      content.innerHTML = '<div class="modal-loading">Loadingâ€¦</div>';
       modal.classList.add('open');
       _pollAuditModal();
     }
@@ -850,7 +850,7 @@
       const result    = data.last_result;
       const report    = data.last_report;
 
-      let html = `<div class="audit-modal-header"><div class="audit-modal-title">Stream Audit — ${escapeHtml(sourceName)}</div></div>`;
+      let html = `<div class="audit-modal-header"><div class="audit-modal-title">Stream Audit â€” ${escapeHtml(sourceName)}</div></div>`;
 
       if (isRunning) {
         const done  = data.done  || 0;
@@ -861,8 +861,8 @@
         if (data.dead)        bits.push(`<span class="aud-dead">${data.dead} dead</span>`);
         if (data.flagged)     bits.push(`<span class="aud-drm">${data.flagged} DRM</span>`);
         if (data.skipped_403) bits.push(`<span class="aud-403">${data.skipped_403} rate-limited</span>`);
-        const phaseLabel = data.phase === 'recheck' ? 'Rechecking…' : 'Running…';
-        const statusText = data.status === 'queued' ? 'Queued…' : ('● ' + phaseLabel + (bits.length ? ' ' + bits.join(' · ') : ''));
+        const phaseLabel = data.phase === 'recheck' ? 'Recheckingâ€¦' : 'Runningâ€¦';
+        const statusText = data.status === 'queued' ? 'Queuedâ€¦' : ('â— ' + phaseLabel + (bits.length ? ' ' + bits.join(' Â· ') : ''));
         html += `
           <div class="audit-running-section">
             <div class="audit-running-status">${statusText}</div>
@@ -883,7 +883,7 @@
         ].filter(Boolean);
         html += `
           <div class="audit-summary">
-            <div class="audit-summary-counts">${bits.join(' · ')}</div>
+            <div class="audit-summary-counts">${bits.join(' Â· ')}</div>
             ${ts ? `<div class="audit-summary-ts">${escapeHtml(ts)}</div>` : ''}
           </div>`;
       }
@@ -916,7 +916,7 @@
         } else if (!result) {
           html += `<div class="audit-no-results">No audit has been run yet. Run an audit to check all channels for dead streams, DRM, and VOD-only content.</div>`;
         } else if (result && result.checked > 0) {
-          html += `<div class="audit-no-results" style="color:var(--success-soft)">✓ All ${result.checked} checked channels are healthy.</div>`;
+          html += `<div class="audit-no-results" style="color:var(--success-soft)">âœ“ All ${result.checked} checked channels are healthy.</div>`;
         }
       }
 
@@ -999,30 +999,30 @@
 
     async function auditReEnableChannel(channelId, btn) {
       btn.disabled = true;
-      btn.textContent = 'Saving…';
+      btn.textContent = 'Savingâ€¦';
       try {
         const r = await fetch(`/api/channels/${channelId}`, {
           method: 'PATCH',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({is_enabled: true}),
         });
-        btn.textContent = r.ok ? 'Re-enabled ✓' : 'Error';
+        btn.textContent = r.ok ? 'Re-enabled âœ“' : 'Error';
       } catch (e) {
         btn.textContent = 'Error';
         btn.disabled = false;
       }
     }
 
-    // ── Scrape progress polling ───────────────────────────────────────────
+    // â”€â”€ Scrape progress polling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const _pollTimers  = {};
     const _scrapeBtn   = {};
     const _scrapeStart = {};
     const _phaseLabel  = {
-      bootstrap: 'Authenticating…',
-      channels:  'Fetching channels…',
+      bootstrap: 'Authenticatingâ€¦',
+      channels:  'Fetching channelsâ€¦',
       epg:       null,
       logos:     null,
-      starting:  'Starting…',
+      starting:  'Startingâ€¦',
     };
 
     function _statusText(data) {
@@ -1036,9 +1036,9 @@
           const pct = Math.round(data.done / data.total * 100);
           return { cls: 'status-running', text: `Caching logos ${data.done} / ${data.total} (${pct}%)` };
         }
-        return { cls: 'status-running', text: _phaseLabel[data.phase] || 'Running…' };
+        return { cls: 'status-running', text: _phaseLabel[data.phase] || 'Runningâ€¦' };
       }
-      return { cls: 'status-running', text: 'Running…' };
+      return { cls: 'status-running', text: 'Runningâ€¦' };
     }
 
     function _renderStatus(sourceId, data) {
@@ -1059,7 +1059,7 @@
       if (!statusEl) return;
       if (lastError) {
         statusEl.className = 'scrape-status';
-        statusEl.innerHTML = `<span class="status-text" style="color:var(--danger)">⚠ ${escapeHtml(lastError)}</span>`;
+        statusEl.innerHTML = `<span class="status-text" style="color:var(--danger)">âš  ${escapeHtml(lastError)}</span>`;
         // Update err-pip in dashboard row
         const dashRow = document.getElementById(`dash-row-${sourceId}`);
         let pip = dashRow?.querySelector('.err-pip');
@@ -1072,7 +1072,7 @@
         setTimeout(() => { statusEl.innerHTML = ''; statusEl.className = 'scrape-status'; }, 12000);
       } else {
         statusEl.className = 'scrape-status';
-        statusEl.innerHTML = '<span class="status-text" style="color:var(--success)">✓ Complete</span>';
+        statusEl.innerHTML = '<span class="status-text" style="color:var(--success)">âœ“ Complete</span>';
         setTimeout(() => { statusEl.innerHTML = ''; statusEl.className = 'scrape-status'; }, 8000);
       }
     }
@@ -1090,7 +1090,7 @@
             _renderStatus(sourceId, d);
             _pollTimers[sourceId] = setTimeout(poll, 1000);
           } else if (seenRunning) {
-            // Transitioned running→idle: the job finished.
+            // Transitioned runningâ†’idle: the job finished.
             delete _pollTimers[sourceId];
             const countEl = document.getElementById(`ch-count-${sourceId}`);
             if (countEl) fetch('/api/sources').then(r => r.json()).then(ss => {
@@ -1099,7 +1099,7 @@
             }).catch(() => {});
             _showResult(sourceId, d.last_error || null);
           } else {
-            // Idle before we ever saw running — check if a recent scrape completed.
+            // Idle before we ever saw running â€” check if a recent scrape completed.
             const scraped = d.last_scraped_ms || 0;
             const start   = _scrapeStart[sourceId] || 0;
             if (scraped > start) {
@@ -1126,7 +1126,7 @@
       poll();
     }
 
-    // ── Stream Audit progress polling ─────────────────────────────────────
+    // â”€â”€ Stream Audit progress polling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const _auditPollTimers = {};
     const _auditRunBtns    = {};
     const _auditGrace      = {};
@@ -1134,16 +1134,16 @@
     function _auditStatusText(data) {
       if (data.status === 'queued') return { cls: 'audit-status-queued', text: 'Stream Audit queued' };
       if (data.status === 'running') {
-        if (data.phase === 'starting') return { cls: 'audit-status-running', text: 'Stream Audit starting…' };
+        if (data.phase === 'starting') return { cls: 'audit-status-running', text: 'Stream Audit startingâ€¦' };
         if (data.total > 0) {
           const pct  = Math.round(data.done / data.total * 100);
           const bits = [`${data.done} / ${data.total} (${pct}%)`];
           if (data.flagged)      bits.push(`${data.flagged} DRM`);
           if (data.dead)         bits.push(`${data.dead} dead`);
           if (data.skipped_403)  bits.push(`${data.skipped_403} rate-limited`);
-          return { cls: 'audit-status-running', text: '📋 ' + bits.join(' · ') };
+          return { cls: 'audit-status-running', text: 'ðŸ“‹ ' + bits.join(' Â· ') };
         }
-        return { cls: 'audit-status-running', text: 'Stream Audit running…' };
+        return { cls: 'audit-status-running', text: 'Stream Audit runningâ€¦' };
       }
       return null;
     }
@@ -1159,7 +1159,7 @@
       if (r.flagged)          bits.push(`<span class="aud-drm">${r.flagged} DRM</span>`);
       if (r.skipped_403)      bits.push(`<span class="aud-403">${r.skipped_403} rate-limited</span>`);
       if (r.errors)           bits.push(`${r.errors} errors`);
-      el.innerHTML = `Last audit: ${bits.join(' · ')}${ts ? ' <span style="opacity:.5">· ' + ts + '</span>' : ''}`;
+      el.innerHTML = `Last audit: ${bits.join(' Â· ')}${ts ? ' <span style="opacity:.5">Â· ' + ts + '</span>' : ''}`;
     }
 
     function _renderAuditStatus(sourceId, data) {
@@ -1196,15 +1196,15 @@
       poll();
     }
 
-    // ── LocalNow city search ──────────────────────────────────────────────
+    // â”€â”€ LocalNow city search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const _citySearchTimers = {};
 
     function renderLocalNowConfig(sourceId, schema, values) {
       const dma    = values['dma']    || '';
       const market = values['market'] || '';
       const currentHtml = (dma && market)
-        ? `<div id="city-selected-display-${sourceId}" style="font-size:0.78rem;color:var(--success-soft);margin-top:0.35rem">✓ DMA ${escapeHtml(dma)} &nbsp;·&nbsp; ${escapeHtml(market)}</div>`
-        : `<div id="city-selected-display-${sourceId}" style="font-size:0.78rem;color:var(--text-muted);margin-top:0.35rem">No city configured — defaulting to New York, NY</div>`;
+        ? `<div id="city-selected-display-${sourceId}" style="font-size:0.78rem;color:var(--success-soft);margin-top:0.35rem">âœ“ DMA ${escapeHtml(dma)} &nbsp;Â·&nbsp; ${escapeHtml(market)}</div>`
+        : `<div id="city-selected-display-${sourceId}" style="font-size:0.78rem;color:var(--text-muted);margin-top:0.35rem">No city configured â€” defaulting to New York, NY</div>`;
 
       const renderFieldSet = (fields) => fields.map(f => {
         const val = values[f.key] ?? f.default ?? '';
@@ -1226,7 +1226,7 @@
           <label>City / Market</label>
           <div class="city-search-wrap">
             <input type="text" id="city-search-input-${sourceId}"
-                   placeholder="Search for your city…"
+                   placeholder="Search for your cityâ€¦"
                    oninput="debounceCitySearch(${sourceId}, this.value)"
                    autocomplete="off">
             <div class="city-search-results" id="city-results-${sourceId}"></div>
@@ -1237,7 +1237,7 @@
         <div class="advanced-box">
           <button type="button" class="advanced-toggle" onclick="toggleAdvanced(this)">
             <span>Advanced Options</span>
-            <span class="advanced-chevron">▼</span>
+            <span class="advanced-chevron">â–¼</span>
           </button>
           <div class="advanced-copy">Manually override DMA, market slug, program count, and playback settings. Updated automatically when you pick a city above.</div>
           <div class="advanced-body">
@@ -1382,7 +1382,7 @@
       clearTimeout(_citySearchTimers[sourceId]);
       const resultsEl = document.getElementById(`city-results-${sourceId}`);
       if (!query || query.length < 2) { resultsEl.innerHTML = ''; return; }
-      resultsEl.innerHTML = '<div class="city-searching">Searching…</div>';
+      resultsEl.innerHTML = '<div class="city-searching">Searchingâ€¦</div>';
       _citySearchTimers[sourceId] = setTimeout(() => _doCitySearch(sourceId, query), 350);
     }
 
@@ -1402,7 +1402,7 @@
                 data-label="${escapeHtml(c.label)}"
                 onclick="selectCity(${sourceId}, this)">
             ${escapeHtml(c.label)}
-            <div class="city-result-meta">DMA ${escapeHtml(c.dma)} &nbsp;·&nbsp; ${escapeHtml(c.market)}</div>
+            <div class="city-result-meta">DMA ${escapeHtml(c.dma)} &nbsp;Â·&nbsp; ${escapeHtml(c.market)}</div>
           </div>`
         ).join('');
       } catch (e) {
@@ -1423,11 +1423,11 @@
       const sel = document.getElementById(`city-selected-display-${sourceId}`);
       if (sel) {
         sel.style.color = 'var(--success-soft)';
-        sel.textContent = `✓ ${label} (DMA ${dma} · ${market})`;
+        sel.textContent = `âœ“ ${label} (DMA ${dma} Â· ${market})`;
       }
     }
 
-    // ── Source config load / save ─────────────────────────────────────────
+    // â”€â”€ Source config load / save â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function loadSourceConfig(sourceId, sourceName) {
       const container = document.getElementById(`source-config-${sourceId}`);
       const badge = document.getElementById(`config-badge-${sourceId}`);
@@ -1458,7 +1458,7 @@
             badge.className = 'config-badge configured';
             badge.style.display = '';
           } else if (isRequired) {
-            badge.textContent = '⚠ Needs Config';
+            badge.textContent = 'âš  Needs Config';
             badge.className = 'config-badge needs-config';
             badge.style.display = '';
           } else {
@@ -1539,7 +1539,7 @@
           <div class="advanced-box">
             <button type="button" class="advanced-toggle" onclick="toggleAdvanced(this)">
               <span>${advancedTitle}</span>
-              <span class="advanced-chevron">▼</span>
+              <span class="advanced-chevron">â–¼</span>
             </button>
             <div class="advanced-copy">${advancedCopy}</div>
             <div class="advanced-body">
@@ -1563,7 +1563,7 @@
     async function deleteInactiveChannels(sourceId, days = 7) {
       const status = document.getElementById(`delete-status-${sourceId}`);
       const setStatus = (msg, cls = '') => { status.textContent = msg; status.className = 'delete-inactive-status' + (cls ? ' ' + cls : ''); };
-      setStatus('Checking…');
+      setStatus('Checkingâ€¦');
       const cr = await fetch(`/api/sources/${sourceId}/inactive-count?days=${days}`);
       const cd = await cr.json();
       if (!cr.ok) { setStatus('Error: ' + (cd.error || cr.status), 'error'); return; }
@@ -1572,7 +1572,7 @@
         setStatus('');
         return;
       }
-      setStatus('Deleting…');
+      setStatus('Deletingâ€¦');
       const r = await fetch(`/api/sources/${sourceId}/delete-inactive`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -1580,7 +1580,7 @@
       });
       const data = await r.json();
       if (!r.ok) { setStatus('Error: ' + (data.error || r.status), 'error'); return; }
-      setStatus(`✓ Deleted ${data.deleted} channel(s)`, 'ok');
+      setStatus(`âœ“ Deleted ${data.deleted} channel(s)`, 'ok');
       setTimeout(() => location.reload(), 1200);
     }
 
@@ -1609,7 +1609,7 @@
         payload[key] = keyFields[0].value;
       });
 
-      status.textContent = 'Saving…';
+      status.textContent = 'Savingâ€¦';
       status.className = 'config-status';
       try {
         const r = await fetch(`/api/sources/${sourceId}/config`, {
@@ -1619,7 +1619,7 @@
         });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
-        status.textContent = '✓ Saved';
+        status.textContent = 'âœ“ Saved';
         status.className = 'config-status ok';
         fields.forEach(field => {
           if (field.dataset.secret === 'true' && field.value && field.value !== MASK) {
@@ -1642,7 +1642,7 @@
           }
         }
       } catch (e) {
-        status.textContent = '✗ ' + e.message;
+        status.textContent = 'âœ— ' + e.message;
         status.className = 'config-status error';
       }
     }
@@ -1677,7 +1677,7 @@
         .replace(/'/g,'&#39;');
     }
 
-    // ── Page load ─────────────────────────────────────────────────────────
+    // â”€â”€ Page load â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     document.addEventListener('DOMContentLoaded', () => {
       // Load persisted audit results
       document.querySelectorAll('[id^="audit-last-result-"]').forEach(el => {
@@ -1714,7 +1714,7 @@
             banner = document.createElement('div');
             banner.id = 'overlap-banner';
             banner.className = 'overlap-banner';
-            banner.innerHTML = `<strong>⚠ Channel number overlaps detected across generated M3U outputs</strong><ul>${items}</ul>`;
+            banner.innerHTML = `<strong>âš  Channel number overlaps detected across generated M3U outputs</strong><ul>${items}</ul>`;
             document.querySelector('.container').prepend(banner);
           }
         } else if (banner) {

@@ -20,7 +20,7 @@ This explicitly opts them out of Gracenote routing rather than leaving them
 in an ambiguous 'auto' state.
 
 Run:
-    docker exec fastchannels python /app/migrations/011_disable_name_matched_gracenote.py
+    docker exec fastchannelsv2 python /app/migrations/011_disable_name_matched_gracenote.py
 """
 import sqlite3, sys, pathlib
 

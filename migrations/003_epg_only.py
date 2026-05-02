@@ -5,7 +5,7 @@ EPG-only sources are excluded from M3U output but their program data
 is used to enrich EPG for channels matched by name in other sources.
 
 Run:
-    docker exec fastchannels python /app/migrations/003_epg_only.py
+    docker exec fastchannelsv2 python /app/migrations/003_epg_only.py
 """
 import sqlite3, sys, pathlib
 
