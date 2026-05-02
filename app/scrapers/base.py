@@ -1,0 +1,345 @@
+import copy
+import logging
+import socket
+import unicodedata
+from abc import ABC, abstractmethod
+from typing import Optional
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+logger = logging.getLogger(__name__)
+
+_SPANISH_LANGUAGE_MARKERS = (
+    'en espanol',
+    'espanol',
+    'español',
+    'spanish',
+    'latino',
+    'latina',
+    'latinos',
+    'latinas',
+    'noticias',
+    'deportes',
+    'novelas',
+    'telenovela',
+    'telemundo',
+    'univision',
+    'canela',
+    'estrella',
+    'azteca',
+    'nuevo latino',
+    'siempre latino',
+    # Spanish-language channel names / phrases
+    'cine de',       # "Cine de Horror", "Cine de Accion"
+    'todo cine',     # "Todo Cine"
+    'lamusica',      # "LaMúsica TV" (accent stripped by fold)
+    'tv amor',       # "TV Amor"
+    'multimedios',   # Mexican broadcast network
+    'bandamax',      # Mexican music channel
+    'ritmoson',      # Latin music channel
+    'tele hit',      # Mexican pop music channel
+    # Spanish channel names / title words
+    'cuando',        # "Cuando Los Angeles Caen"
+    'unica',         # "ÚNICA TV" (accent stripped)
+    'vas o no',      # "Vas O No Vas USA"
+    'en alerta',     # "C4 en Alerta"
+    'apostaria',     # "Apostarías por Mí" (accent stripped)
+    'naturaleza',    # "Naturaleza Salvaje"
+    'atresplayer',   # AtresmediaPlayer (Spanish broadcaster)
+    'el rey',        # El Rey Network (Robert Rodriguez's Spanish channel)
+    'pitufo',        # "Pitufo TV" (Los Pitufos = The Smurfs, Spanish)
+    'vix',           # ViX / Vix+ (Univision/Televisa FAST service)
+    'caracol',       # Caracol TV (Colombian network)
+    'tudn',          # Telemundo/Univision Deportes Network
+    'exitos',        # "Éxitos del Momento" (accent stripped by fold)
+    'parejas',       # "Grandes Parejas" (Spanish for couples)
+    'ahora',         # "Aqui y Ahora" (Spanish for now)
+    'lo mejor de',   # "Lo Mejor de Liga" (Spanish for the best of)
+    'desimpedidos',  # Brazilian Portuguese football channel
+    # Additional Spanish words / brand names found during language audit
+    'accion',        # fold of acción — "FreeTV Acción", "FILMEX Acción"
+    'cinepolis',     # Cinépolis (Mexican cinema chain)
+    'crimen',        # Spanish for crime — "Crimen", "Todo Crimen"
+    'filmex',        # FILMEX Spanish-language movie service
+    'historia',      # Spanish History Channel brand
+    'lucha',         # Lucha Libre — "Lucha Plus", "Lucha Libre AAA"
+    'saborear',      # "Saborear TV" (Mexican food/lifestyle)
+    'sangre',        # Spanish for blood — "Runtime Sangre Fría"
+    'sureno',        # fold of sureño — "FreeTV Sureño"
+)
+
+
+def fold_language_hint(value: str | None) -> str:
+    if not value:
+        return ''
+    normalized = unicodedata.normalize('NFKD', value)
+    ascii_only = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
+    return ascii_only.casefold()
+
+
+def infer_language_from_metadata(*values: str | None, default: str = 'en') -> str:
+    for value in values:
+        folded = fold_language_hint(value)
+        if any(marker in folded for marker in _SPANISH_LANGUAGE_MARKERS):
+            return 'es'
+    return default
+
+
+_SSL_HANDSHAKE_MARKERS = (
+    'handshake failure',
+    'handshake_failure',
+    'sslv3 alert',
+    'ssl alert',
+    'tlsv1 alert',
+)
+
+
+def is_ssl_handshake_failure(exc: Exception) -> bool:
+    """Return True when the exception chain contains an SSL handshake rejection.
+
+    Unlike DNS failures or connection timeouts, an SSL handshake alert is
+    sent by the server and indicates a persistent protocol mismatch — not a
+    transient network blip.  The audit uses this to mark channels as dead
+    rather than silently skipping them.
+    """
+    seen = set()
+    current = exc
+    while current and id(current) not in seen:
+        seen.add(id(current))
+        if any(marker in str(current).lower() for marker in _SSL_HANDSHAKE_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def is_transient_network_error(exc: Exception) -> bool:
+    network_types = (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        socket.gaierror,
+        ConnectionError,
+        TimeoutError,
+        OSError,
+    )
+    network_markers = (
+        'name resolution',
+        'failed to resolve',
+        'temporary failure in name resolution',
+        'network is unreachable',
+        'err_name_not_resolved',
+        'max retries exceeded',
+        'failed to establish a new connection',
+    )
+
+    seen = set()
+    current = exc
+    while current and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current).lower()
+        if isinstance(current, network_types) and any(marker in text for marker in network_markers):
+            return True
+        if any(marker in text for marker in network_markers):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def merge_config_updates(existing: dict | None, updates: dict | None) -> dict:
+    """Recursively merge scraper config updates into existing config JSON."""
+    merged = copy.deepcopy(existing or {})
+    for key, value in (updates or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_config_updates(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+class StreamDeadError(Exception):
+    """Raised by audit_resolve() when a channel is confirmed dead (not a transient error)."""
+
+
+class ScrapeSkipError(Exception):
+    """Raised when a scraper should skip the current run without treating it as a hard failure."""
+
+
+class ConfigField:
+    """Declares a single config field a scraper needs from the UI."""
+    def __init__(self, key: str, label: str, field_type: str = 'text',
+                 required: bool = False, secret: bool = False,
+                 placeholder: str = '', help_text: str = '', default=None,
+                 options: list | None = None):
+        self.key         = key          # key in source.config JSON
+        self.label       = label        # human label in UI
+        self.field_type  = field_type   # 'text' | 'password' | 'select' | 'toggle' | 'number'
+        self.required    = required
+        self.secret      = secret       # never echo back in API responses
+        self.placeholder = placeholder
+        self.help_text   = help_text
+        self.default     = default
+        self.options     = options or []  # [{'value': ..., 'label': ...}] for select fields
+
+    def to_dict(self):
+        d = {
+            'key':         self.key,
+            'label':       self.label,
+            'field_type':  self.field_type,
+            'required':    self.required,
+            'secret':      self.secret,
+            'placeholder': self.placeholder,
+            'help_text':   self.help_text,
+            'default':     self.default,
+        }
+        if self.options:
+            d['options'] = self.options
+        return d
+
+
+class ChannelData:
+    def __init__(self, source_channel_id, name, stream_url, logo_url=None,
+                 slug=None, category=None, language='en', country='US',
+                 stream_type='hls', number=None, gracenote_id=None,
+                 guide_key=None, tags=None, description=None):
+        self.source_channel_id = source_channel_id
+        self.name        = name
+        self.stream_url  = stream_url
+        self.logo_url    = logo_url
+        self.slug        = slug or name.lower().replace(' ', '-')
+        self.category    = category
+        self.language    = language
+        self.country     = country
+        self.stream_type = stream_type
+        self.number      = number
+        self.gracenote_id = gracenote_id
+        self.guide_key   = guide_key
+        self.tags        = tags or []  # list of raw tag/group strings from source
+        self.description = description  # optional long-form channel description
+
+
+class ProgramData:
+    def __init__(self, source_channel_id, title, start_time, end_time,
+                 description=None, poster_url=None, category=None, rating=None,
+                 episode_title=None, season=None, episode=None,
+                 original_air_date=None):
+        self.source_channel_id = source_channel_id
+        self.title        = title
+        self.start_time   = start_time
+        self.end_time     = end_time
+        self.description  = description
+        self.poster_url   = poster_url
+        self.category     = category
+        self.rating       = rating
+        self.episode_title = episode_title
+        self.season       = season
+        self.episode      = episode
+        self.original_air_date = original_air_date
+
+
+class BaseScraper(ABC):
+    source_name:     str = None
+    source_aliases:  tuple[str, ...] = ()
+    display_name:    str = None
+    scrape_interval: int = 360
+    min_scrape_interval: int = 30
+    max_scrape_interval: int = 10080
+    stream_audit_enabled: bool = False  # opt-in; enable Stream Audit (health + DRM scan) for this source
+    config_required: bool = False      # True if source won't return useful channels without user configuration
+    channel_refresh_hours: int = 0   # 0 = refresh channels every run; >0 = only refresh channels after N hours
+
+    # Per-phase wall-clock limits (seconds). Overriding in a subclass replaces
+    # the entire dict — set all keys you need, not just the ones you're changing.
+    # Plex EPG is the heaviest legitimate case at ~65s; 300s gives a 4.5x buffer.
+    # Roku overrides epg=900 for its deep content-proxy fetch.
+    phase_timeouts: dict = {
+        'init':      30,
+        'bootstrap': 60,
+        'channels':  120,
+        'epg':       300,
+    }
+
+    # Declare config fields your scraper needs.
+    # The admin UI auto-renders these — no template changes needed for new scrapers.
+    # Example:
+    #   config_schema = [
+    #       ConfigField('username', 'Username', placeholder='email@example.com'),
+    #       ConfigField('password', 'Password', field_type='password', secret=True),
+    #   ]
+    config_schema: list[ConfigField] = []
+
+    def __init__(self, config: dict = None):
+        # Scrapers mutate config at runtime to queue persisted tokens/caches.
+        # Work on a deep copy so SQLAlchemy-backed JSON objects are not mutated
+        # in-place before the caller explicitly saves pending updates.
+        self.config  = copy.deepcopy(config or {})
+        self._pending_config_updates: dict = {}
+        self._progress_cb = None   # optional callable(phase, done, total) set by worker
+        self.session = requests.Session()
+        self._configure_session(self.session)
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (compatible; FastChannels/1.0)'
+        })
+
+    def _retry_config(self) -> Retry:
+        return Retry(
+            total=3,
+            connect=3,
+            read=2,
+            status=2,
+            backoff_factor=1.0,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=None,
+            raise_on_status=False,
+        )
+
+    def _configure_session(self, session: requests.Session) -> None:
+        adapter = HTTPAdapter(max_retries=self._retry_config())
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+
+    def new_session(self, *, headers: dict | None = None, cookies: dict | None = None) -> requests.Session:
+        session = requests.Session()
+        self._configure_session(session)
+        session.headers.update(headers or dict(self.session.headers))
+        session.cookies.update(cookies or self.session.cookies.get_dict())
+        return session
+
+    def _update_config(self, key: str, value) -> None:
+        """Queue a config key/value to be persisted by the worker after this run.
+        Also updates self.config so the value is usable within the current run."""
+        self.config[key] = value
+        self._pending_config_updates[key] = value
+
+    def pre_run_setup(self) -> None:
+        """Called by the worker before fetch_channels/fetch_epg.
+        Override to perform auth or any setup that queues config updates
+        (e.g. capturing tokens) so they can be persisted before the long scrape."""
+        pass
+
+    @abstractmethod
+    def fetch_channels(self) -> list[ChannelData]: ...
+
+    def fetch_epg(self, channels: list[ChannelData], **kwargs) -> list[ProgramData]:
+        return []
+
+    def resolve(self, raw_url: str) -> str:
+        """Override to resolve raw stored URLs to playable URLs at request time."""
+        return raw_url
+
+    def run(self) -> tuple[list[ChannelData], list[ProgramData]]:
+        channels = self.fetch_channels()
+        programs = self.fetch_epg(channels)
+        return channels, programs
+
+    def get(self, url: str, **kwargs) -> Optional[requests.Response]:
+        try:
+            r = self.session.get(url, timeout=30, **kwargs)
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            if is_transient_network_error(e):
+                logger.warning(f'[{self.source_name}] transient GET failure for {url}: {e}')
+            else:
+                logger.error(f'[{self.source_name}] GET {url} failed: {e}')
+            return None

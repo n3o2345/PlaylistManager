@@ -1,0 +1,7 @@
+# Development overrides — mounts local app/ so code changes take effect without rebuild.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+services:
+  fastchannels:
+    volumes:
+      - ./app:/app/app

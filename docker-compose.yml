@@ -1,0 +1,12 @@
+services:
+  fastchannels:
+    build: .
+    container_name: fastchannels
+    restart: unless-stopped
+    ports:
+      - "5523:5523"
+    volumes:
+      - db_data:/data
+
+volumes:
+  db_data:

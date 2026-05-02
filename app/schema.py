@@ -1,0 +1,393 @@
+from sqlalchemy import text
+
+from .extensions import db
+
+_DEFAULT_FEEDS = (
+    {
+        "slug": "default",
+        "name": "Default",
+        "description": "Built-in feed with all enabled channels.",
+        "filters": "{}",
+        "chnum_start": None,
+        "is_enabled": 1,
+    },
+)
+
+
+def _merge_source_name(conn, old_name: str, new_name: str) -> None:
+    old_rows = conn.execute(
+        text("SELECT id FROM sources WHERE name = :name ORDER BY id"),
+        {"name": old_name},
+    ).fetchall()
+    if not old_rows:
+        return
+
+    new_row = conn.execute(
+        text("SELECT id FROM sources WHERE name = :name ORDER BY id LIMIT 1"),
+        {"name": new_name},
+    ).fetchone()
+
+    if not new_row:
+        conn.execute(
+            text("UPDATE sources SET name = :new_name WHERE name = :old_name"),
+            {"new_name": new_name, "old_name": old_name},
+        )
+        return
+
+    target_source_id = new_row[0]
+    for (old_source_id,) in old_rows:
+        channel_rows = conn.execute(
+            text(
+                "SELECT id, source_channel_id FROM channels "
+                "WHERE source_id = :source_id ORDER BY id"
+            ),
+            {"source_id": old_source_id},
+        ).fetchall()
+
+        for old_channel_id, source_channel_id in channel_rows:
+            existing_channel = conn.execute(
+                text(
+                    "SELECT id FROM channels "
+                    "WHERE source_id = :source_id AND "
+                    "((source_channel_id = :source_channel_id) OR "
+                    "(:source_channel_id IS NULL AND source_channel_id IS NULL)) "
+                    "ORDER BY id LIMIT 1"
+                ),
+                {
+                    "source_id": target_source_id,
+                    "source_channel_id": source_channel_id,
+                },
+            ).fetchone()
+
+            if existing_channel:
+                conn.execute(
+                    text(
+                        "UPDATE programs SET channel_id = :target_channel_id "
+                        "WHERE channel_id = :old_channel_id"
+                    ),
+                    {
+                        "target_channel_id": existing_channel[0],
+                        "old_channel_id": old_channel_id,
+                    },
+                )
+                conn.execute(
+                    text("DELETE FROM channels WHERE id = :channel_id"),
+                    {"channel_id": old_channel_id},
+                )
+                continue
+
+            conn.execute(
+                text("UPDATE channels SET source_id = :target_source_id WHERE id = :channel_id"),
+                {
+                    "target_source_id": target_source_id,
+                    "channel_id": old_channel_id,
+                },
+            )
+
+        conn.execute(text("DELETE FROM sources WHERE id = :source_id"), {"source_id": old_source_id})
+
+
+def ensure_runtime_schema() -> None:
+    engine = db.engine
+    if engine.dialect.name != "sqlite":
+        return
+
+    with engine.begin() as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        }
+        if "app_settings" not in tables or "feeds" not in tables:
+            db.create_all()
+            tables = {
+                row[0]
+                for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+            }
+        if "feeds" not in tables:
+            return
+
+        if "app_settings" in tables:
+            cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(app_settings)"))
+            }
+            if "public_base_url" not in cols:
+                conn.execute(text("ALTER TABLE app_settings ADD COLUMN public_base_url TEXT"))
+            if "timezone_name" not in cols:
+                conn.execute(text("ALTER TABLE app_settings ADD COLUMN timezone_name TEXT"))
+            if "gracenote_auto_fill" not in cols:
+                # Existing installs default ON — preserve current auto-fill behaviour.
+                conn.execute(text(
+                    "ALTER TABLE app_settings ADD COLUMN gracenote_auto_fill BOOLEAN NOT NULL DEFAULT 1"
+                ))
+            if "gracenote_map_url" not in cols:
+                conn.execute(text("ALTER TABLE app_settings ADD COLUMN gracenote_map_url TEXT"))
+            if "migration_012_done" not in cols:
+                conn.execute(text(
+                    "ALTER TABLE app_settings ADD COLUMN migration_012_done BOOLEAN NOT NULL DEFAULT 0"
+                ))
+            if "gracenote_contribution_url" not in cols:
+                conn.execute(text(
+                    "ALTER TABLE app_settings ADD COLUMN gracenote_contribution_url TEXT"
+                ))
+            if "last_contribution_at" not in cols:
+                conn.execute(text(
+                    "ALTER TABLE app_settings ADD COLUMN last_contribution_at DATETIME"
+                ))
+            if "dvr_epg_auto_refresh" not in cols:
+                conn.execute(text(
+                    "ALTER TABLE app_settings ADD COLUMN dvr_epg_auto_refresh BOOLEAN NOT NULL DEFAULT 1"
+                ))
+            if "image_proxy_enabled" not in cols:
+                conn.execute(text(
+                    "ALTER TABLE app_settings ADD COLUMN image_proxy_enabled BOOLEAN NOT NULL DEFAULT 1"
+                ))
+
+        if "sources" in tables:
+            src_cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(sources)"))
+            }
+            if "last_audited_at" not in src_cols:
+                conn.execute(text(
+                    "ALTER TABLE sources ADD COLUMN last_audited_at DATETIME"
+                ))
+
+        if "channels" in tables:
+            ch_cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(channels)"))
+            }
+            if "category_override" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN category_override VARCHAR(128)"
+                ))
+            if "language_override" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN language_override VARCHAR(16)"
+                ))
+            if "tags" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN tags TEXT"
+                ))
+            if "is_duplicate" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN is_duplicate BOOLEAN NOT NULL DEFAULT 0"
+                ))
+            if "last_seen_at" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN last_seen_at DATETIME"
+                ))
+            if "missed_scrapes" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN missed_scrapes INTEGER NOT NULL DEFAULT 0"
+                ))
+            if "guide_key" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN guide_key TEXT"
+                ))
+            if "number_pinned" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN number_pinned BOOLEAN NOT NULL DEFAULT 0"
+                ))
+            if "gracenote_locked" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN gracenote_locked BOOLEAN NOT NULL DEFAULT 0"
+                ))
+            if "gracenote_mode" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN gracenote_mode TEXT NOT NULL DEFAULT 'auto'"
+                ))
+            if "logo_url_pinned" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN logo_url_pinned BOOLEAN NOT NULL DEFAULT 0"
+                ))
+            if "description" not in ch_cols:
+                conn.execute(text(
+                    "ALTER TABLE channels ADD COLUMN description TEXT"
+                ))
+            conn.execute(text(
+                "UPDATE channels SET missed_scrapes = 0 WHERE missed_scrapes IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE channels SET gracenote_locked = 0 WHERE gracenote_locked IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE channels SET gracenote_mode = 'manual' "
+                "WHERE gracenote_locked = 1 AND gracenote_id IS NOT NULL AND TRIM(gracenote_id) != ''"
+            ))
+            conn.execute(text(
+                "UPDATE channels SET gracenote_mode = 'off' "
+                "WHERE (gracenote_id IS NULL OR TRIM(gracenote_id) = '') "
+                "AND gracenote_mode IS NULL"
+            ))
+            conn.execute(text(
+                "UPDATE channels SET gracenote_mode = 'auto' "
+                "WHERE gracenote_mode IS NULL OR TRIM(gracenote_mode) = ''"
+            ))
+            conn.execute(text(
+                "UPDATE channels "
+                "SET last_seen_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP) "
+                "WHERE is_active = 1 AND last_seen_at IS NULL"
+            ))
+            # Migration 011: channels that had no gracenote_id of their own but shared a
+            # name with a channel that did were silently routed to the Gracenote M3U by
+            # the cross-source name-matching feature (commit f6d5cd4, reverted).  Set
+            # gracenote_mode='off' on those channels so they stay out of Gracenote
+            # routing even if name matching is re-introduced.
+            # Guard: only run if any gracenote_ids exist — when auto-fill is OFF this
+            # is a no-op and avoids incorrectly setting channels to 'off' on restart.
+            _has_gn = conn.execute(text(
+                "SELECT 1 FROM channels WHERE gracenote_id IS NOT NULL AND gracenote_id != '' LIMIT 1"
+            )).fetchone()
+            if _has_gn:
+                conn.execute(text(
+                    "UPDATE channels "
+                    "SET gracenote_mode = 'off' "
+                    "WHERE (gracenote_id IS NULL OR gracenote_id = '') "
+                    "AND gracenote_mode NOT IN ('off', 'manual') "
+                    "AND LOWER(name) IN ("
+                    "    SELECT LOWER(name) FROM channels "
+                    "    WHERE gracenote_id IS NOT NULL AND gracenote_id != ''"
+                    ")"
+                ))
+
+        # Migration 012: clear gracenote_ids that came from the community CSV rather
+        # than the native scraper API.  Channels with gracenote_mode='manual' are left
+        # untouched (user explicitly set them).  Cleared channels get gracenote_mode='off'
+        # so the scraper won't re-populate them from the CSV on the next scrape, and users
+        # can re-assign via the Gracenote helper popup if desired.
+        # This migration is one-time: once applied it is marked done so that community CSV
+        # updates (including the bundled baseline) don't keep clearing scraped IDs on restart.
+        if "channels" in tables and "sources" in tables and "app_settings" in tables:
+            _m012_done = conn.execute(
+                text("SELECT migration_012_done FROM app_settings WHERE id = 1")
+            ).fetchone()
+            if not _m012_done or not _m012_done[0]:
+                from .gracenote_map import lookup_gracenote
+                rows = conn.execute(text(
+                    "SELECT c.id, c.gracenote_id, s.name, c.source_channel_id "
+                    "FROM channels c JOIN sources s ON c.source_id = s.id "
+                    "WHERE c.gracenote_id IS NOT NULL AND c.gracenote_id != '' "
+                    "AND (c.gracenote_mode IS NULL OR c.gracenote_mode NOT IN ('manual', 'off'))"
+                )).fetchall()
+                to_clear = [
+                    row[0] for row in rows
+                    if (m := lookup_gracenote(row[2], row[3])) and m.get('tmsid') == row[1]
+                ]
+                if to_clear:
+                    conn.execute(
+                        text("UPDATE channels SET gracenote_id = NULL, gracenote_mode = 'off' WHERE id = :id"),
+                        [{'id': rid} for rid in to_clear],
+                    )
+                conn.execute(text("UPDATE app_settings SET migration_012_done = 1 WHERE id = 1"))
+
+        if "tvtv_program_cache" in tables:
+            tvtv_cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(tvtv_program_cache)"))
+            }
+            if "subtitle" not in tvtv_cols:
+                conn.execute(text(
+                    "ALTER TABLE tvtv_program_cache ADD COLUMN subtitle VARCHAR(512)"
+                ))
+
+        if "programs" in tables:
+            program_cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(programs)"))
+            }
+            if "original_air_date" not in program_cols:
+                conn.execute(text(
+                    "ALTER TABLE programs ADD COLUMN original_air_date DATE"
+                ))
+            existing_indexes = {
+                row[1]
+                for row in conn.execute(text("PRAGMA index_list(programs)"))
+            }
+            if "idx_programs_end_time" not in existing_indexes:
+                conn.execute(text(
+                    "CREATE INDEX idx_programs_end_time ON programs (end_time)"
+                ))
+
+        # Normalize the one hyphenated internal source id to snake_case so
+        # source naming stays consistent across code paths and fresh installs.
+        # Older installs may have both names present due to alias seeding, so
+        # merge rows first to avoid violating the unique constraint.
+        _merge_source_name(conn, "amazon-prime-free", "amazon_prime_free")
+
+        feed_rows = conn.execute(text("SELECT id, filters FROM feeds")).fetchall()
+        for feed_id, raw_filters in feed_rows:
+            if not raw_filters:
+                continue
+            try:
+                import json
+                filters = json.loads(raw_filters) if isinstance(raw_filters, str) else raw_filters
+            except Exception:
+                continue
+            if not isinstance(filters, dict):
+                continue
+            sources = filters.get("sources")
+            if not isinstance(sources, list) or "amazon-prime-free" not in sources:
+                continue
+            filters["sources"] = [
+                "amazon_prime_free" if value == "amazon-prime-free" else value
+                for value in sources
+            ]
+            conn.execute(
+                text("UPDATE feeds SET filters = :filters WHERE id = :feed_id"),
+                {"filters": json.dumps(filters), "feed_id": feed_id},
+            )
+
+        existing_slugs = {
+            row[0]
+            for row in conn.execute(text("SELECT slug FROM feeds"))
+        }
+        for feed in _DEFAULT_FEEDS:
+            if feed["slug"] in existing_slugs:
+                continue
+            conn.execute(
+                text(
+                    "INSERT INTO feeds "
+                    "(slug, name, description, filters, chnum_start, is_enabled) "
+                    "VALUES (:slug, :name, :description, :filters, :chnum_start, :is_enabled)"
+                ),
+                feed,
+            )
+
+        # Apply category corrections to all existing channels on startup so
+        # upgrading users don't have to wait for a full re-scrape cycle.
+        if "channels" in tables:
+            from .scrapers.category_utils import category_for_channel
+            rows = conn.execute(text("SELECT id, name, category FROM channels")).fetchall()
+            updates = [
+                (category_for_channel(name, cat), row_id)
+                for row_id, name, cat in rows
+                if category_for_channel(name, cat) != cat
+            ]
+            if updates:
+                conn.execute(
+                    text("UPDATE channels SET category = :cat WHERE id = :id"),
+                    [{"cat": cat, "id": row_id} for cat, row_id in updates],
+                )
+
+        # Migrate global_chnum_start from AppSettings → default Feed.chnum_start.
+        # AppSettings.global_chnum_start is now legacy; the Feed column is authoritative.
+        if "app_settings" in tables:
+            as_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(app_settings)"))}
+            if "global_chnum_start" in as_cols:
+                row = conn.execute(
+                    text("SELECT global_chnum_start FROM app_settings WHERE id = 1")
+                ).fetchone()
+                if row and row[0] is not None:
+                    default_feed_row = conn.execute(
+                        text("SELECT id, chnum_start FROM feeds WHERE slug = 'default' LIMIT 1")
+                    ).fetchone()
+                    if default_feed_row and default_feed_row[1] is None:
+                        conn.execute(
+                            text("UPDATE feeds SET chnum_start = :val WHERE id = :fid"),
+                            {"val": row[0], "fid": default_feed_row[0]},
+                        )
+                    conn.execute(
+                        text("UPDATE app_settings SET global_chnum_start = NULL WHERE id = 1")
+                    )
