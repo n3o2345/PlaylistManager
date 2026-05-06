@@ -431,12 +431,7 @@ def _rewrite_media_playlist(text: str, playlist_url: str) -> str:
     for line in text.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith('#'):
-            # Rewrite segment URLs (relative or absolute) to absolute
             line = urljoin(playlist_url, stripped)
-        elif stripped.startswith('#EXT-X-MAP'):
-            # EXT-X-MAP carries the codec init segment URI — must be absolute
-            # or clients lose video at discontinuity/ad boundaries
-            line = _rewrite_uri_attrs(line, playlist_url)
         elif stripped.startswith('#') and 'URI="' in stripped:
             line = _rewrite_uri_attrs(line, playlist_url)
         lines.append(line)
@@ -601,6 +596,7 @@ def play(source_name: str, channel_id: str):
     # Stirr streams so every manifest fetch goes through the server IP, regardless
     # of which CDN (ssai.aniview.com, weathernationtv.com, etc.) is serving.
     if source_name == 'stirr':
+        from urllib.parse import quote as _quote
         encoded_id = _quote(channel.source_channel_id, safe='')
         return redirect(
             f"{request.host_url.rstrip('/')}/play/stirr/{encoded_id}/proxy.m3u8",
@@ -611,7 +607,9 @@ def play(source_name: str, channel_id: str):
     # instead of a direct redirect so IPTV clients can access the segments
     # (which are on an open CDN) without needing Origin/Referer headers.
     if source_name == 'distro' and resolved_url:
-        if urlsplit(resolved_url).netloc in _DISTRO_SESSION_CDN_HOSTS:
+        from urllib.parse import urlsplit as _urlsplit
+        if _urlsplit(resolved_url).netloc in _DISTRO_SESSION_CDN_HOSTS:
+            from urllib.parse import quote as _quote
             encoded_id = _quote(channel.source_channel_id, safe='')
             return redirect(
                 f"{request.host_url.rstrip('/')}/play/distro/{encoded_id}/proxy.m3u8",

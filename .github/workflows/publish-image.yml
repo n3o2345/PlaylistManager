@@ -65,7 +65,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha
           labels: |
-            org.opencontainers.image.title=FastChannels
+            org.opencontainers.image.title=FastChannelsv2
             org.opencontainers.image.description=FAST channel aggregator with M3U and XMLTV outputs
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
