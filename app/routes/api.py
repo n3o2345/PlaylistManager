@@ -48,6 +48,21 @@ from .admin import _apply_admin_feed_membership_filters, _duplicate_name_sets, _
 
 api_bp = Blueprint('api', __name__)
 
+
+@api_bp.route('/health')
+def health():
+    """Health check endpoint for Docker / TrueNAS SCALE."""
+    try:
+        from ..extensions import db
+        db.session.execute(db.text('SELECT 1'))
+        db_ok = True
+    except Exception:
+        db_ok = False
+    status = 'ok' if db_ok else 'degraded'
+    code = 200 if db_ok else 503
+    return jsonify({'status': status, 'db': db_ok}), code
+
+
 # Simple in-process cache so repeated city searches don't re-bootstrap every time.
 _localnow_city_scraper: dict = {}  # {'scraper': LocalNowScraper, 'expires': float}
 _GRACENOTE_RE = re.compile(r'^(\d+|(EP|SH|MV|SP|TR)\d+)$', re.I)
