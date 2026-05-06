@@ -82,7 +82,8 @@ PY
     return 0
 }
 
-wait_for_network
+# Run network check in the background — gunicorn starts immediately after DB is ready.
+wait_for_network &
 
 # Start isolated worker roles with watchdogs.
 # Conservative design:
