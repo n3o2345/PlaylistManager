@@ -550,6 +550,38 @@
     </div>
   </div>
 
+  <!-- App Logo URL card -->
+  <div class="source-card">
+    <div class="source-header" style="cursor:default">
+      <div class="source-title">
+        <div class="source-icon">⚡</div>
+        <div>
+          <div class="source-name">App Logo URL</div>
+          <div class="source-meta">Copy the logo URL to use in TrueNAS or other apps</div>
+        </div>
+      </div>
+    </div>
+    <div class="source-body open">
+      <div style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--text-muted);">Use this URL when adding FastChannels as an app icon in TrueNAS SCALE or any other platform that asks for an icon URL.</div>
+      {% set _logo_url = url_for('static', filename='fastchannels_logo.png', _external=True) %}
+      <div class="url-chip" onclick="copyLogoUrl(event, this)" style="cursor:pointer;display:flex;align-items:center;gap:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.55rem 0.9rem;font-family:monospace;font-size:0.78rem;color:var(--accent);overflow:hidden;">
+        <span class="url-chip-text" id="logo-url-text" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ _logo_url }}</span>
+        <a href="{{ _logo_url }}" target="_blank" onclick="event.stopPropagation()" style="color:var(--text-muted);font-size:0.75rem;flex-shrink:0" title="Open in new tab">↗</a>
+        <button class="copy-btn" onclick="copyLogoUrl(event, this.closest('.url-chip'))" style="background:none;border:1px solid var(--border);border-radius:4px;padding:0.2rem 0.6rem;font-size:0.75rem;cursor:pointer;color:var(--text-muted);flex-shrink:0;">Copy</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    function copyLogoUrl(e, chip) {
+      e.stopPropagation();
+      const url = chip.querySelector('#logo-url-text').textContent.trim();
+      navigator.clipboard.writeText(url).then(() => {
+        const btn = chip.querySelector('.copy-btn');
+        if (btn) { btn.textContent = 'Copied!'; btn.classList.add('ok'); setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 1800); }
+      });
+    }
+  </script>
+
   <!-- Image Proxy card -->
   <div class="source-card">
     <div class="source-header" style="cursor:default">
