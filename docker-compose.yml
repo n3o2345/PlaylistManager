@@ -1,12 +1,17 @@
 services:
   fastchannelsv2:
-    build: .
     container_name: fastchannelsv2
+    image: ghcr.io/n3o2345/fastchannelsv2:latest
     restart: unless-stopped
     ports:
-      - "5523:5523"
+      - '5523:5523'
     volumes:
-      - db_data:/data
-
-volumes:
-  db_data:
+      - /mnt/System/Apps/FastChannels/db_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -sf http://localhost:5523/health || exit 1
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 5

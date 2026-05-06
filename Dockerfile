@@ -25,6 +25,6 @@ RUN chmod +x /app/entrypoint.sh
 EXPOSE 5523
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=5 \
-    CMD curl -sf http://localhost:5523/api/health || exit 1
+    CMD curl -sf http://localhost:5523/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]

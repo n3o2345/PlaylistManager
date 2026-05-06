@@ -100,4 +100,15 @@ def create_app(config_class=Config):
     def root():
         return redirect(url_for('admin.dashboard'))
 
+    @app.route('/health')
+    def health():
+        from flask import jsonify
+        try:
+            db.session.execute(db.text('SELECT 1'))
+            db_ok = True
+        except Exception:
+            db_ok = False
+        status = 'ok' if db_ok else 'degraded'
+        return jsonify({'status': status, 'db': db_ok}), (200 if db_ok else 503)
+
     return app
