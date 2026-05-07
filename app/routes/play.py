@@ -596,7 +596,6 @@ def play(source_name: str, channel_id: str):
     # Stirr streams so every manifest fetch goes through the server IP, regardless
     # of which CDN (ssai.aniview.com, weathernationtv.com, etc.) is serving.
     if source_name == 'stirr':
-        from urllib.parse import quote as _quote
         encoded_id = _quote(channel.source_channel_id, safe='')
         return redirect(
             f"{request.host_url.rstrip('/')}/play/stirr/{encoded_id}/proxy.m3u8",
@@ -609,7 +608,6 @@ def play(source_name: str, channel_id: str):
     if source_name == 'distro' and resolved_url:
         from urllib.parse import urlsplit as _urlsplit
         if _urlsplit(resolved_url).netloc in _DISTRO_SESSION_CDN_HOSTS:
-            from urllib.parse import quote as _quote
             encoded_id = _quote(channel.source_channel_id, safe='')
             return redirect(
                 f"{request.host_url.rstrip('/')}/play/distro/{encoded_id}/proxy.m3u8",
