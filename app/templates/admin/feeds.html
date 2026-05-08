@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Feeds â€” FastChannels</title>
+  <title>Feeds — FastChannels</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -90,7 +90,7 @@
     .empty { text-align: center; padding: 4rem 2rem; color: var(--text-dim); }
     .empty h3 { font-size: 1rem; margin-bottom: 0.5rem; }
 
-    /* â”€â”€ Modal â”€â”€ */
+    /* ── Modal ── */
     .overlay {
       display: none; position: fixed; inset: 0;
       background: var(--overlay-strong); z-index: 50;
@@ -310,6 +310,7 @@
         <div style="flex:1;min-width:0">
           <div class="feed-name">{{ feed.name }}</div>
           {% if feed.description %}<div class="feed-desc">{{ feed.description }}</div>{% endif %}
+          {% if feed.group_by == 'source' %}<div style="font-size:0.7rem;color:var(--accent-soft);margin-top:0.15rem">grouped by source</div>{% endif %}
           <div class="filter-tags">
             {% set f = feed.filters or {} %}
             {% if f.get('channel_ids') %}
@@ -344,7 +345,7 @@
               {% endif %}
             {% endif %}
             {% if f.get('excluded_channel_ids') %}
-              <span class="badge-pill pill-red">âˆ’{{ f['excluded_channel_ids']|length }} excluded</span>
+              <span class="badge-pill pill-red">−{{ f['excluded_channel_ids']|length }} excluded</span>
             {% endif %}
             {% if feed.slug == 'default' %}
               <span class="badge-pill pill-gray">built-in</span>
@@ -389,7 +390,7 @@
               <button class="btn btn-ghost" type="button" onclick="saveFeedChnum({{ feed.id }})">Save</button>
               <button class="btn btn-ghost" type="button" onclick="resetFeedChnums({{ feed.id }}, '{{ feed.name|e }}', true, this)">Reset Channel Numbers</button>
             </div>
-            <div class="help">Applies to all sources without their own channel number start.{% if default_chnum_from_env %} Currently inherited from env var <code>MASTER_CHANNEL_NUMBER_START</code> â€” saving here overrides it.{% endif %}</div>
+            <div class="help">Applies to all sources without their own channel number start.{% if default_chnum_from_env %} Currently inherited from env var <code>MASTER_CHANNEL_NUMBER_START</code> — saving here overrides it.{% endif %}</div>
             <div id="chnum-conflict-{{ feed.id }}" style="margin-top:4px;font-size:0.78rem;line-height:1.6"></div>
           </div>
           <span class="save-status" id="chnum-status-{{ feed.id }}"></span>
@@ -424,13 +425,13 @@
         <div class="url-chip" onclick="copyChip(event, this, '{{ base_url }}/feeds/{{ feed.slug }}/m3u')">
           <span style="color:var(--text-soft);font-family:sans-serif;font-size:0.7rem;flex-shrink:0">Standard ({{ std_count }})</span>
           <span class="url-chip-text">{{ base_url }}/feeds/{{ feed.slug }}/m3u</span>
-          <a href="{{ base_url }}/feeds/{{ feed.slug }}/m3u" target="_blank" onclick="event.stopPropagation()" style="color:var(--text-muted);font-size:0.75rem;flex-shrink:0" title="Open">â†—</a>
+          <a href="{{ base_url }}/feeds/{{ feed.slug }}/m3u" target="_blank" onclick="event.stopPropagation()" style="color:var(--text-muted);font-size:0.75rem;flex-shrink:0" title="Open">↗</a>
           <button class="copy-btn" onclick="copyChip(event, this.closest('.url-chip'), '{{ base_url }}/feeds/{{ feed.slug }}/m3u')">Copy</button>
         </div>
         <div class="url-chip" onclick="copyChip(event, this, '{{ base_url }}/feeds/{{ feed.slug }}/epg.xml')">
           <span style="color:var(--text-soft);font-family:sans-serif;font-size:0.7rem;flex-shrink:0">EPG</span>
           <span class="url-chip-text">{{ base_url }}/feeds/{{ feed.slug }}/epg.xml</span>
-          <a href="{{ base_url }}/feeds/{{ feed.slug }}/epg.xml" target="_blank" onclick="event.stopPropagation()" style="color:var(--text-muted);font-size:0.75rem;flex-shrink:0" title="Open">â†—</a>
+          <a href="{{ base_url }}/feeds/{{ feed.slug }}/epg.xml" target="_blank" onclick="event.stopPropagation()" style="color:var(--text-muted);font-size:0.75rem;flex-shrink:0" title="Open">↗</a>
           <button class="copy-btn" onclick="copyChip(event, this.closest('.url-chip'), '{{ base_url }}/feeds/{{ feed.slug }}/epg.xml')">Copy</button>
         </div>
         {% endif %}
@@ -438,7 +439,7 @@
         <div class="url-chip" onclick="copyChip(event, this, '{{ base_url }}/feeds/{{ feed.slug }}/m3u/gracenote')">
           <span style="color:var(--text-soft);font-family:sans-serif;font-size:0.7rem;flex-shrink:0">Gracenote ({{ gn_count }})</span>
           <span class="url-chip-text">{{ base_url }}/feeds/{{ feed.slug }}/m3u/gracenote</span>
-          <a href="{{ base_url }}/feeds/{{ feed.slug }}/m3u/gracenote" target="_blank" onclick="event.stopPropagation()" style="color:var(--text-muted);font-size:0.75rem;flex-shrink:0" title="Open">â†—</a>
+          <a href="{{ base_url }}/feeds/{{ feed.slug }}/m3u/gracenote" target="_blank" onclick="event.stopPropagation()" style="color:var(--text-muted);font-size:0.75rem;flex-shrink:0" title="Open">↗</a>
           <button class="copy-btn" onclick="copyChip(event, this.closest('.url-chip'), '{{ base_url }}/feeds/{{ feed.slug }}/m3u/gracenote')">Copy</button>
         </div>
         {% endif %}
@@ -448,7 +449,7 @@
   </div>
 </div>
 
-<!-- â”€â”€ Create / Edit Modal â”€â”€ -->
+<!-- ── Create / Edit Modal ── -->
 <div class="overlay" id="modal-overlay">
   <div class="modal">
     <h3 id="modal-title">New Feed</h3>
@@ -514,15 +515,23 @@
       <div class="help">Useful when you want a feed that is only Gracenote-capable or only XMLTV-backed.</div>
     </div>
     <div class="field">
+      <label>M3U Group Title <span style="color:var(--text-dim);font-weight:400;text-transform:none">(group-title= in playlist)</span></label>
+      <select id="f-group-by">
+        <option value="category">Category (e.g. News, Sports)</option>
+        <option value="source">Source (e.g. Pluto, LocalNow, Plex)</option>
+      </select>
+      <div class="help">Controls what appears as the group in your IPTV client's channel list. "Source" groups all Pluto channels together, all Plex channels together, etc.</div>
+    </div>
+    <div class="field">
       <label>Channels <span style="color:var(--text-dim);font-weight:400;text-transform:none">(leave none checked to use filters above)</span></label>
       <div class="ch-bar">
-        <span id="ch-selected-count">loadingâ€¦</span>
+        <span id="ch-selected-count">loading…</span>
         <span class="ch-bar-actions">
           <button class="ch-bar-btn" id="ch-btn-selectall" type="button" onclick="selectAllChannels()">Select all</button>
           <button class="ch-bar-btn" type="button" onclick="clearAllChannels()">Clear</button>
         </span>
       </div>
-      <input class="ch-search" id="ch-search" type="text" placeholder="Filter channelsâ€¦" oninput="renderChannelListDebounced()">
+      <input class="ch-search" id="ch-search" type="text" placeholder="Filter channels…" oninput="renderChannelListDebounced()">
       <div class="ch-list" id="channel-list"></div>
     </div>
 
@@ -550,7 +559,7 @@
 <script>
 const FEED_CHNUM_PLACEHOLDER = {{ feed_chnum_placeholder | tojson }};
 
-// â”€â”€ Channel list cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Channel list cache ─────────────────────────────────────────────────────
 let _allChannels = [];
 let _selectedChannelIds = new Set();
 let _excludedChannelIds = new Set();
@@ -558,7 +567,7 @@ let _pinnedChannelIds   = new Set();
 
 async function ensureChannelsLoaded() {
   if (_allChannels.length > 0) return;
-  document.getElementById('ch-selected-count').textContent = 'loadingâ€¦';
+  document.getElementById('ch-selected-count').textContent = 'loading…';
   try {
     let page = 1, all = [];
     while (true) {
@@ -586,19 +595,19 @@ function renderChannelList() {
   const container = document.getElementById('channel-list');
   const frag = document.createDocumentFragment();
 
-  // Pinned section â€” always shown at the top regardless of other filters
+  // Pinned section — always shown at the top regardless of other filters
   if (_pinnedChannelIds.size > 0) {
     const pinnedSection = document.createElement('div');
     pinnedSection.className = 'ch-pinned-section';
     const hdr = document.createElement('div');
     hdr.className = 'ch-pinned-header';
-    hdr.textContent = 'ðŸ“Œ Pinned';
+    hdr.textContent = '📌 Pinned';
     pinnedSection.appendChild(hdr);
     for (const id of _pinnedChannelIds) {
       const ch = _allChannels.find(c => c.id === id);
       const row = document.createElement('div');
       row.className = 'ch-pinned-item';
-      row.innerHTML = `<span class="ch-name">${ch ? ch.name : `Channel #${id}`}</span><span class="ch-source">${ch ? ch.source_name : ''}</span><button class="btn-unpin" title="Remove from pinned">Ã—</button>`;
+      row.innerHTML = `<span class="ch-name">${ch ? ch.name : `Channel #${id}`}</span><span class="ch-source">${ch ? ch.source_name : ''}</span><button class="btn-unpin" title="Remove from pinned">×</button>`;
       row.querySelector('.btn-unpin').onclick = () => {
         _pinnedChannelIds.delete(id);
         renderChannelList();
@@ -664,7 +673,7 @@ function renderChannelList() {
   if (overflow > 0) {
     const msg = document.createElement('div');
     msg.style.cssText = 'padding:0.4rem 0.6rem;font-size:0.78rem;color:var(--text-muted);text-align:center';
-    msg.textContent = `â€¦and ${overflow} more â€” refine search to narrow results`;
+    msg.textContent = `…and ${overflow} more — refine search to narrow results`;
     frag.appendChild(msg);
   }
 
@@ -700,9 +709,9 @@ function updateChCount() {
   if (n > 0) {
     text = `${n} channel${n === 1 ? '' : 's'} selected`;
   } else if (x > 0) {
-    text = `Using filters above â€” ${x} channel${x === 1 ? '' : 's'} excluded`;
+    text = `Using filters above — ${x} channel${x === 1 ? '' : 's'} excluded`;
   } else {
-    text = 'None selected â€” using filters above';
+    text = 'None selected — using filters above';
   }
   document.getElementById('ch-selected-count').textContent = text;
 }
@@ -721,7 +730,7 @@ function clearAllChannels() {
   schedulePreview();
 }
 
-// â”€â”€ Modal state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Modal state ────────────────────────────────────────────────────────────
 async function openModal(feed = null) {
   document.getElementById('modal-title').textContent = feed ? 'Edit Feed' : 'New Feed';
   document.getElementById('edit-id').value    = feed ? feed.id : '';
@@ -734,6 +743,7 @@ async function openModal(feed = null) {
   document.getElementById('f-chnum-help').textContent =
     `Leave blank to auto-assign (currently ${chnumPh}). Set a value to number all channels in this feed sequentially from here.`;
   document.getElementById('f-gracenote').value = feed ? (feed.filters.gracenote || '') : '';
+  document.getElementById('f-group-by').value  = feed ? (feed.group_by || 'category') : 'category';
   document.getElementById('modal-status').textContent = '';
   document.getElementById('ch-search').value  = '';
 
@@ -775,7 +785,7 @@ function closeModal() {
   _chnumRanges = [];
 }
 
-// â”€â”€ Channel number range conflict checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Channel number range conflict checker ───────────────────────────────────
 let _chnumRanges = [];
 const _inlineRangeCache = {};  // keyed by excludeId
 
@@ -815,7 +825,7 @@ async function checkInlineChnumConflict(feedId) {
     const nameColor = conflict ? 'var(--danger)' : 'var(--text-soft)';
     return `<div style="display:inline-flex;flex-direction:column;border:1px solid ${border};border-radius:6px;padding:0.2rem 0.5rem;background:var(--bg)">
       <span style="font-size:0.78rem;font-weight:600;color:${nameColor}">${conflict ? 'âš  ' : ''}${r.feed_name}</span>
-      <span style="font-size:0.7rem;color:var(--text-muted)">${r.start.toLocaleString()}â€“${r.end.toLocaleString()}${gnBadge}</span>
+      <span style="font-size:0.7rem;color:var(--text-muted)">${r.start.toLocaleString()}–${r.end.toLocaleString()}${gnBadge}</span>
     </div>`;
   };
 
@@ -866,7 +876,7 @@ function checkChnumConflict() {
   let html = '';
   if (conflicts.length > 0) {
     html += conflicts.map(r =>
-      `<div style="color:var(--danger);font-weight:600">âš  Overlaps with "${r.feed_name}" (${r.start.toLocaleString()}â€“${r.end.toLocaleString()})</div>`
+      `<div style="color:var(--danger);font-weight:600">⚠ Overlaps with "${r.feed_name}" (${r.start.toLocaleString()}–${r.end.toLocaleString()})</div>`
     ).join('');
   }
   if (shown.length > 0) {
@@ -874,14 +884,14 @@ function checkChnumConflict() {
     if (nonConflict.length > 0) {
       html += '<span style="color:var(--text-muted)">In use: </span>';
       html += nonConflict.map(r =>
-        `<span style="color:var(--text-soft)">${r.feed_name} (${r.start.toLocaleString()}â€“${r.end.toLocaleString()})</span>`
-      ).join(' &nbsp;Â·&nbsp; ');
+        `<span style="color:var(--text-soft)">${r.feed_name} (${r.start.toLocaleString()}–${r.end.toLocaleString()})</span>`
+      ).join(' &nbsp;·&nbsp; ');
     }
   }
   el.innerHTML = html;
 }
 
-// â”€â”€ Live channel count preview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Live channel count preview ────────────────────────────────────────────
 let _previewTimer = null;
 function schedulePreview() {
   clearTimeout(_previewTimer);
@@ -913,7 +923,7 @@ async function updateCountPreview() {
 
   const shown = max ? Math.min(total, max) : total;
   const pinnedExtra = _pinnedChannelIds.size;
-  const warn  = (shown + pinnedExtra) > 750 ? ' âš ï¸ over 750 â€” Channels DVR may be slow' : '';
+  const warn  = (shown + pinnedExtra) > 750 ? ' ⚠️ over 750 — Channels DVR may be slow' : '';
   const pinnedNote = pinnedExtra > 0 ? ` + <strong>${pinnedExtra}</strong> pinned` : '';
   document.getElementById('count-preview').innerHTML =
     `<strong>${shown}</strong>${pinnedNote} channels will be in this feed${warn}`;
@@ -943,7 +953,7 @@ document.getElementById('f-gracenote').addEventListener('change', () => {
 
 document.getElementById('f-max').addEventListener('input', schedulePreview);
 
-// â”€â”€ Build filters from modal state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Build filters from modal state ────────────────────────────────────────
 function buildFilters() {
   const f = {};
   if (_selectedChannelIds.size > 0) {
@@ -967,7 +977,7 @@ function buildFilters() {
   return f;
 }
 
-// â”€â”€ Save â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Save ──────────────────────────────────────────────────────────────────
 async function saveFeed() {
   const name = document.getElementById('f-name').value.trim();
   if (!name) { alert('Feed name is required.'); return; }
@@ -976,7 +986,7 @@ async function saveFeed() {
   const btn     = document.getElementById('save-btn');
   const status  = document.getElementById('modal-status');
   btn.disabled  = true;
-  status.textContent = 'Savingâ€¦';
+  status.textContent = 'Saving…';
   status.className   = 'save-status';
 
   const chnumRaw = document.getElementById('f-chnum').value.trim();
@@ -985,6 +995,7 @@ async function saveFeed() {
     description: document.getElementById('f-desc').value.trim(),
     filters:     buildFilters(),
     chnum_start: chnumRaw ? parseInt(chnumRaw, 10) : null,
+    group_by:    document.getElementById('f-group-by').value,
     is_enabled:  true,
   };
 
@@ -1009,14 +1020,14 @@ async function saveFeed() {
     closeModal();
     location.reload();
   } catch(e) {
-    status.textContent = 'âœ— ' + e.message;
+    status.textContent = '✗ ' + e.message;
     status.className   = 'save-status error';
     btn.disabled = false;
   }
 }
 
 
-// â”€â”€ Push to Channels DVR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Push to Channels DVR ──────────────────────────────────────────────────
 async function pushToDvr(id, name, count, standardCount, btn, force = false) {
   // Warn if the standard M3U (non-gracenote) exceeds the DVR recommended limit.
   // If standardCount is 0 the standard M3U won't be registered, so skip the warning.
@@ -1028,7 +1039,7 @@ async function pushToDvr(id, name, count, standardCount, btn, force = false) {
   }
   const orig = btn.textContent;
   btn.disabled = true;
-  btn.textContent = 'â³ Addingâ€¦';
+  btn.textContent = '⏳ Adding…';
   try {
     const r = await fetch(`/api/feeds/${id}/push-to-dvr`, {
       method: 'POST',
@@ -1050,7 +1061,7 @@ async function pushToDvr(id, name, count, standardCount, btn, force = false) {
       btn.textContent = orig;
       return;
     }
-    btn.textContent = 'âœ“ Added!';
+    btn.textContent = '✓ Added!';
     btn.style.background = 'var(--success-bg-2)';
     btn.style.color = 'var(--success-soft)';
     setTimeout(() => {
@@ -1066,9 +1077,9 @@ async function pushToDvr(id, name, count, standardCount, btn, force = false) {
   }
 }
 
-// â”€â”€ Delete â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Delete ────────────────────────────────────────────────────────────────
 async function deleteFeed(id, name, btn) {
-  if (!confirm(`Delete feed "${name}"?\nThis removes the feed definition only â€” no channels are deleted.`)) return;
+  if (!confirm(`Delete feed "${name}"?\nThis removes the feed definition only — no channels are deleted.`)) return;
   btn.disabled = true;
   try {
     const r = await fetch(`/api/feeds/${id}`, { method: 'DELETE' });
@@ -1080,7 +1091,7 @@ async function deleteFeed(id, name, btn) {
   }
 }
 
-// â”€â”€ Copy URL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Copy URL ──────────────────────────────────────────────────────────────
 function copyChip(e, chip, url) {
   e.preventDefault();
   e.stopPropagation();
@@ -1110,20 +1121,20 @@ function copyChip(e, chip, url) {
   }
 }
 
-// â”€â”€ Post-save cache prewarm â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Post-save cache prewarm ───────────────────────────────────────────────
 function _prewarmFeed(feedData, statusEl) {
   const urls = [feedData.m3u_url, feedData.epg_url, feedData.gracenote_url].filter(Boolean);
   // For the default feed also prewarm the top-level /m3u and /epg.xml routes
   if (feedData.slug === 'default') {
     urls.push('/m3u', '/epg.xml', '/m3u/gracenote');
   }
-  if (statusEl) { statusEl.textContent = 'â†» Regeneratingâ€¦'; statusEl.className = 'save-status'; }
+  if (statusEl) { statusEl.textContent = '↻ Regenerating…'; statusEl.className = 'save-status'; }
   let done = 0;
   for (const url of urls) {
     fetch(url).then(() => {
       done++;
       if (done === urls.length && statusEl) {
-        statusEl.textContent = 'âœ“ Saved & regenerated';
+        statusEl.textContent = '✓ Saved & regenerated';
         statusEl.className   = 'save-status ok';
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
       }
@@ -1131,12 +1142,12 @@ function _prewarmFeed(feedData, statusEl) {
   }
 }
 
-// â”€â”€ Save feed channel number start (inline on card) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Save feed channel number start (inline on card) ──────────────────────
 async function saveFeedChnum(feedId) {
   const input  = document.getElementById(`chnum-${feedId}`);
   const status = document.getElementById(`chnum-status-${feedId}`);
   const raw    = input.value.trim();
-  status.textContent = 'Savingâ€¦';
+  status.textContent = 'Saving…';
   status.className   = 'save-status';
   try {
     const r = await fetch(`/api/feeds/${feedId}`, {
@@ -1148,7 +1159,7 @@ async function saveFeedChnum(feedId) {
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
     _prewarmFeed(data, status);
   } catch(e) {
-    status.textContent = 'âœ— ' + e.message;
+    status.textContent = '✗ ' + e.message;
     status.className   = 'save-status error';
   }
 }
@@ -1162,7 +1173,7 @@ async function resetFeedChnums(feedId, feedName, isDefault, btn) {
 
   const orig = btn.textContent;
   btn.disabled = true;
-  status.textContent = 'Resettingâ€¦';
+  status.textContent = 'Resetting…';
   status.className = 'save-status';
   try {
     const r = await fetch(`/api/feeds/${feedId}/reset-channel-numbers`, {
@@ -1173,7 +1184,7 @@ async function resetFeedChnums(feedId, feedName, isDefault, btn) {
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
     _prewarmFeed(data.feed, status);
   } catch (e) {
-    status.textContent = 'âœ— ' + e.message;
+    status.textContent = '✗ ' + e.message;
     status.className   = 'save-status error';
   } finally {
     btn.disabled = false;

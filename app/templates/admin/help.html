@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Help â€” FastChannels</title>
+  <title>Help — FastChannels</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -125,7 +125,7 @@
         <ul>
           <li><code>Active</code>: channel still exists upstream (set by scraper).</li>
           <li><code>Enabled</code>: channel is included in your M3U / EPG output (set by you).</li>
-          <li><code>DRM</code>: stream is protected â€” not playable in generic IPTV clients.</li>
+          <li><code>DRM</code>: stream is protected — not playable in generic IPTV clients.</li>
           <li><code>Dead</code>: stream audit found this channel is not currently playable.</li>
         </ul>
       </section>
@@ -135,7 +135,7 @@
         <ul>
           <li>The built-in <code>Default</code> feed includes all enabled channels.</li>
           <li>Create custom feeds to filter by source, category, language, or a hand-picked channel list.</li>
-          <li>Each feed has its own stable <code>/feeds/&lt;slug&gt;/m3u</code> and <code>/epg.xml</code> â€” cached for fast delivery.</li>
+          <li>Each feed has its own stable <code>/feeds/&lt;slug&gt;/m3u</code> and <code>/epg.xml</code> — cached for fast delivery.</li>
           <li>Set <code>Channel Number Start</code> on a feed to number channels sequentially from a given number.</li>
           <li><code>/m3u/gracenote</code> feed variants are for Channels DVR guide matching via Gracenote.</li>
           <li><code>Add to Channels DVR</code> registers the feed directly in your DVR. Configure the DVR URL in <code>Settings</code> first.</li>
@@ -155,7 +155,7 @@
       <section class="card">
         <h2>Inspect &amp; Stream Audit</h2>
         <ul>
-          <li><code>Inspect</code> tests a single channel's full resolve path â€” identifies dead manifests, VOD-only streams, DRM, and resolver failures. Also shows stream variant stats (resolution, bitrate, codecs).</li>
+          <li><code>Inspect</code> tests a single channel's full resolve path — identifies dead manifests, VOD-only streams, DRM, and resolver failures. Also shows stream variant stats (resolution, bitrate, codecs).</li>
           <li><code>Stream Audit</code> health-checks every channel for a source in bulk and marks dead/DRM channels inactive automatically.</li>
         </ul>
       </section>
@@ -165,7 +165,7 @@
         <ul>
           <li>Gracenote IDs link channels to Channels DVR's guide database for rich EPG matching.</li>
           <li><strong>Auto</strong>: scrapers fill IDs automatically when available (e.g. Pluto's native station IDs). Controlled by the toggle in Settings.</li>
-          <li><strong>Manual</strong>: you set the ID â€” it is never overwritten by a scrape. Use the Gracenote Helper popup on any channel row in Channels.</li>
+          <li><strong>Manual</strong>: you set the ID — it is never overwritten by a scrape. Use the Gracenote Helper popup on any channel row in Channels.</li>
           <li><strong>Community Map</strong>: curated CSV mappings for sources that don't expose native IDs.</li>
           <li>Set mode to <strong>Off</strong> on a channel to exclude it from Gracenote routing entirely.</li>
         </ul>
@@ -186,7 +186,7 @@
       <section class="card">
         <h2>Reports</h2>
         <ul>
-          <li><a href="/admin/reports/channel-changes">Channel Changes</a> <code>BETA</code> â€” inferred "New", "Now Inactive", and "At Risk" channels from data FastChannels already stores.</li>
+          <li><a href="/admin/reports/channel-changes">Channel Changes</a> <code>BETA</code> — inferred "New", "Now Inactive", and "At Risk" channels from data FastChannels already stores.</li>
         </ul>
       </section>
     </div>

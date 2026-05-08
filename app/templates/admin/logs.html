@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Logs â€” FastChannels</title>
+  <title>Logs — FastChannels</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -122,10 +122,10 @@
   </nav>
 
   <div class="toolbar">
-    <button class="btn" onclick="refresh()">â†º Refresh</button>
+    <button class="btn" onclick="refresh()">↺ Refresh</button>
     <label><input type="checkbox" id="auto-refresh" onchange="toggleAuto()"> Auto (5s)</label>
     <label><input type="checkbox" id="tail-mode" checked onchange="applyFilter()"> Tail</label>
-    <input class="filter-input" id="filter" type="text" placeholder="Filterâ€¦" oninput="applyFilter()">
+    <input class="filter-input" id="filter" type="text" placeholder="Filter…" oninput="applyFilter()">
     <span class="status" id="status"></span>
   </div>
 
@@ -146,13 +146,13 @@
 
     async function refresh() {
       const status = document.getElementById('status');
-      status.textContent = 'Loadingâ€¦';
+      status.textContent = 'Loading…';
       try {
         const r = await fetch('/api/logs?n=2500');
         const data = await r.json();
         _lines = data.lines;
         applyFilter();
-        status.textContent = `${_lines.length} lines Â· ${new Date().toLocaleTimeString([], { timeZone: APP_TIME_ZONE, timeZoneName: 'short' })}`;
+        status.textContent = `${_lines.length} lines · ${new Date().toLocaleTimeString([], { timeZone: APP_TIME_ZONE, timeZoneName: 'short' })}`;
       } catch(e) {
         status.textContent = 'Error: ' + e.message;
       }

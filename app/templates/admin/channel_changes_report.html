@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Channel Changes Report â€” FastChannels</title>
+  <title>Channel Changes Report — FastChannels</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -214,20 +214,20 @@
   </nav>
 
   <div class="page">
-    <div class=â€heroâ€>
+    <div class="hero">
       <div>
-        <h1>Channel Changes Report <span style=â€font-size:0.65rem;font-weight:600;background:var(--accent-bg);color:var(--accent-soft);border:1px solid var(--info);border-radius:999px;padding:0.15rem 0.55rem;vertical-align:middle;letter-spacing:0.05emâ€>BETA</span></h1>
-        <p class=â€subtitleâ€>
-          Track channel lineup changes across your sources â€” new arrivals, channels that have gone inactive, and channels at risk of dropping out.
+        <h1>Channel Changes Report <span style="font-size:0.65rem;font-weight:600;background:var(--accent-bg);color:var(--accent-soft);border:1px solid var(--info);border-radius:999px;padding:0.15rem 0.55rem;vertical-align:middle;letter-spacing:0.05em">BETA</span></h1>
+        <p class="subtitle">
+          Track channel lineup changes across your sources — new arrivals, channels that have gone inactive, and channels at risk of dropping out.
         </p>
       </div>
-      <div class=â€timestampâ€>
+      <div class="timestamp">
         Generated {{ now|localtime }}
       </div>
     </div>
 
-    <div class=â€bannerâ€>
-      <p><strong>Note:</strong> this report is in beta. Inactive channel timing is approximate â€” it reflects when FastChannels detected the change, not necessarily when the channel disappeared. Accuracy improves over time as more scrape history is collected.</p>
+    <div class="banner">
+      <p><strong>Note:</strong> this report is in beta. Inactive channel timing is approximate — it reflects when FastChannels detected the change, not necessarily when the channel disappeared. Accuracy improves over time as more scrape history is collected.</p>
     </div>
 
     <div class="toolbar">
@@ -296,7 +296,7 @@
               <div class="row-source">{{ source.display_name }}</div>
             </div>
             <div class="row-meta">
-              Inserted {{ channel.created_at|localtime }} Â·
+              Inserted {{ channel.created_at|localtime }} ·
               Channel ID <code>{{ channel.source_channel_id }}</code>
             </div>
           </div>
@@ -308,7 +308,7 @@
 
       <section class="card">
         <h2>Now Inactive{% if window_days == 1 %} Today{% else %} in Last {{ window_days }} Days{% endif %}</h2>
-        <div class="section-subtitle">Channels that went inactive within the selected window. Timing is approximate â€” based on when the change was detected, not when the channel actually disappeared.</div>
+        <div class="section-subtitle">Channels that went inactive within the selected window. Timing is approximate — based on when the change was detected, not when the channel actually disappeared.</div>
         {% if inferred_lost_daily_counts %}
         <div class="mini-heading">Daily Buckets</div>
         <div class="source-list">
@@ -334,12 +334,12 @@
               <div class="row-source">{{ source.display_name }}</div>
             </div>
             <div class="row-meta">
-              Updated {{ channel.updated_at|localtime }} Â·
-              Last seen {% if channel.last_seen_at %}{{ channel.last_seen_at|localtime }}{% else %}unknown{% endif %} Â·
+              Updated {{ channel.updated_at|localtime }} ·
+              Last seen {% if channel.last_seen_at %}{{ channel.last_seen_at|localtime }}{% else %}unknown{% endif %} ·
               Missed scrapes {{ channel.missed_scrapes or 0 }}
             </div>
             {% if not channel.last_seen_at or (channel.missed_scrapes or 0) >= 3 %}
-            <div class="row-note">Loss time is an estimate â€” this channel may have been gone longer than the window suggests.</div>
+            <div class="row-note">Loss time is an estimate — this channel may have been gone longer than the window suggests.</div>
             {% endif %}
           </div>
           {% else %}
@@ -367,8 +367,8 @@
               <div class="row-source">{{ source.display_name }}</div>
             </div>
             <div class="row-meta">
-              Missed {{ channel.missed_scrapes or 0 }} scrape{{ 's' if (channel.missed_scrapes or 0) != 1 }}{% if source.scrape_interval %} (every {{ source.scrape_interval }}m){% endif %} Â·
-              Last seen {% if channel.last_seen_at %}{{ channel.last_seen_at|localtime }}{% else %}unknown{% endif %} Â·
+              Missed {{ channel.missed_scrapes or 0 }} scrape{{ 's' if (channel.missed_scrapes or 0) != 1 }}{% if source.scrape_interval %} (every {{ source.scrape_interval }}m){% endif %} ·
+              Last seen {% if channel.last_seen_at %}{{ channel.last_seen_at|localtime }}{% else %}unknown{% endif %} ·
               <code>{{ channel.source_channel_id }}</code>
             </div>
           </div>
@@ -397,7 +397,7 @@
               <div class="row-source">{{ source.display_name }}</div>
             </div>
             <div class="row-meta">
-              Last updated {{ channel.updated_at|localtime }} Â·
+              Last updated {{ channel.updated_at|localtime }} ·
               Last seen {% if channel.last_seen_at %}{{ channel.last_seen_at|localtime }}{% else %}unknown{% endif %}
             </div>
           </div>
@@ -428,9 +428,9 @@
             <td style="padding:0.4rem 0.6rem;color:var(--text);font-weight:500">{{ src.display_name }}</td>
             <td style="padding:0.4rem 0.6rem;text-align:right;color:var(--text-strong)">{{ src.active }}</td>
             <td style="padding:0.4rem 0.6rem;text-align:right;color:{% if src.at_risk > 0 %}var(--warning){% else %}var(--text-dim){% endif %}">
-              {% if src.at_risk > 0 %}{{ src.at_risk }}{% else %}â€”{% endif %}
+              {% if src.at_risk > 0 %}{{ src.at_risk }}{% else %}—{% endif %}
             </td>
-            <td style="padding:0.4rem 0.6rem;color:var(--text-muted)">{% if src.scrape_interval %}{{ src.scrape_interval }}m{% else %}â€”{% endif %}</td>
+            <td style="padding:0.4rem 0.6rem;color:var(--text-muted)">{% if src.scrape_interval %}{{ src.scrape_interval }}m{% else %}—{% endif %}</td>
             <td style="padding:0.4rem 0.6rem;color:var(--text-muted)">{% if src.last_scraped_at %}{{ src.last_scraped_at|localtime }}{% else %}Never{% endif %}</td>
           </tr>
           {% endfor %}
@@ -439,8 +439,8 @@
     </section>
     {% endif %}
 
-    <p class=â€footer-noteâ€>
-      âš ï¸ This report is in beta â€” data shown is based on what FastChannels currently tracks during scrapes. Have feedback? Let us know on the forum.
+    <p class="footer-note">
+      ⚠️ This report is in beta — data shown is based on what FastChannels currently tracks during scrapes. Have feedback? Let us know on the forum.
     </p>
   </div>
 <script src="{{ url_for('static', filename='js/admin_theme.js') }}"></script>
