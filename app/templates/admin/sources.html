@@ -390,7 +390,7 @@
 
     {% if needs_config %}
     <div class="needs-config-banner" id="needs-config-banner">
-      <strong>âš  {{ needs_config | length }} source{{ 's' if needs_config | length != 1 else '' }} need{{ '' if needs_config | length != 1 else 's' }} configuration before scraping will return channels</strong>
+      <strong>⚠ {{ needs_config | length }} source{{ 's' if needs_config | length != 1 else '' }} need{{ '' if needs_config | length != 1 else 's' }} configuration before scraping will return channels</strong>
       <ul>
         {% for s in needs_config %}
         <li id="needs-config-item-{{ s.id }}">
@@ -416,7 +416,7 @@
 
     {% if chnum_warnings %}
     <div class="overlap-banner" id="overlap-banner">
-      <strong>âš  Channel number overlaps detected across generated M3U outputs</strong>
+      <strong>⚠ Channel number overlaps detected across generated M3U outputs</strong>
       <ul>
         {% for w in chnum_warnings %}<li>{{ w }}</li>{% endfor %}
       </ul>
@@ -440,11 +440,11 @@
             <td class="col-source">
               <div class="source-name-wrap">
                 <span class="source-name">{{ source.display_name }}</span>
-                {% if source.last_error %}<span class="err-pip" title="{{ source.last_error }}">âš </span>{% endif %}
+                {% if source.last_error %}<span class="err-pip" title="{{ source.last_error }}">⚠</span>{% endif %}
                 {% if cfg_status == 'configured' %}
                   <span class="config-badge configured" id="config-badge-{{ source.id }}">Configured</span>
                 {% elif cfg_status == 'required' %}
-                  <span class="config-badge needs-config" id="config-badge-{{ source.id }}">âš  Needs Config</span>
+                  <span class="config-badge needs-config" id="config-badge-{{ source.id }}">⚠ Needs Config</span>
                 {% elif cfg_status == 'optional' %}
                   <span class="config-badge anon" id="config-badge-{{ source.id }}">Optional</span>
                 {% else %}
@@ -489,7 +489,7 @@
                         {% if not source.is_enabled %}disabled{% endif %}>Audit</button>
                 {% endif %}
                 <button class="btn btn-configure btn-sm" id="configure-btn-{{ source.id }}"
-                        onclick="toggleConfigPanel({{ source.id }})">Configure â–¾</button>
+                        onclick="toggleConfigPanel({{ source.id }})">Configure ▾</button>
               </div>
             </td>
           </tr>
@@ -502,7 +502,7 @@
                    data-config-required="{{ 'true' if config_required.get(source.name) else 'false' }}">
 
                 {% if source.name in ('amazon_prime_free', 'sling') %}
-                <div class="drm-note">âš  All streams from this source are DRM-protected and will not play on most clients.</div>
+                <div class="drm-note">⚠ All streams from this source are DRM-protected and will not play on most clients.</div>
                 {% endif %}
 
                 {% set interval_meta = source_interval_meta.get(source.name, {'recommended': source.scrape_interval, 'min': 30, 'max': 10080}) %}
@@ -575,7 +575,7 @@
       const isOpen = row.style.display !== 'none';
       row.style.display = isOpen ? 'none' : '';
       if (btn) {
-        btn.textContent = isOpen ? 'Configure â–¾' : 'Configure â–´';
+        btn.textContent = isOpen ? 'Configure ▾' : 'Configure ▴';
         btn.classList.toggle('open', !isOpen);
       }
       if (!isOpen) {
@@ -1059,7 +1059,7 @@
       if (!statusEl) return;
       if (lastError) {
         statusEl.className = 'scrape-status';
-        statusEl.innerHTML = `<span class="status-text" style="color:var(--danger)">âš  ${escapeHtml(lastError)}</span>`;
+        statusEl.innerHTML = `<span class="status-text" style="color:var(--danger)">⚠ ${escapeHtml(lastError)}</span>`;
         // Update err-pip in dashboard row
         const dashRow = document.getElementById(`dash-row-${sourceId}`);
         let pip = dashRow?.querySelector('.err-pip');
@@ -1237,7 +1237,7 @@
         <div class="advanced-box">
           <button type="button" class="advanced-toggle" onclick="toggleAdvanced(this)">
             <span>Advanced Options</span>
-            <span class="advanced-chevron">â–¼</span>
+            <span class="advanced-chevron">▼</span>
           </button>
           <div class="advanced-copy">Manually override DMA, market slug, program count, and playback settings. Updated automatically when you pick a city above.</div>
           <div class="advanced-body">
@@ -1458,7 +1458,7 @@
             badge.className = 'config-badge configured';
             badge.style.display = '';
           } else if (isRequired) {
-            badge.textContent = 'âš  Needs Config';
+            badge.textContent = '⚠ Needs Config';
             badge.className = 'config-badge needs-config';
             badge.style.display = '';
           } else {
@@ -1539,7 +1539,7 @@
           <div class="advanced-box">
             <button type="button" class="advanced-toggle" onclick="toggleAdvanced(this)">
               <span>${advancedTitle}</span>
-              <span class="advanced-chevron">â–¼</span>
+              <span class="advanced-chevron">▼</span>
             </button>
             <div class="advanced-copy">${advancedCopy}</div>
             <div class="advanced-body">
@@ -1714,7 +1714,7 @@
             banner = document.createElement('div');
             banner.id = 'overlap-banner';
             banner.className = 'overlap-banner';
-            banner.innerHTML = `<strong>âš  Channel number overlaps detected across generated M3U outputs</strong><ul>${items}</ul>`;
+            banner.innerHTML = `<strong>⚠ Channel number overlaps detected across generated M3U outputs</strong><ul>${items}</ul>`;
             document.querySelector('.container').prepend(banner);
           }
         } else if (banner) {

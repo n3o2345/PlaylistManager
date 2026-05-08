@@ -404,7 +404,7 @@
 
   {% if settings_needs_config %}
   <div class="needs-config-banner" id="settings-needs-config-banner">
-    <strong>âš  {{ settings_needs_config | length }} setting{{ 's' if settings_needs_config | length != 1 else '' }} should be configured on new installs</strong>
+    <strong>⚠ {{ settings_needs_config | length }} setting{{ 's' if settings_needs_config | length != 1 else '' }} should be configured on new installs</strong>
     <ul id="settings-needs-config-list">
       {% for item in settings_needs_config %}
       <li id="settings-needs-config-item-{{ item.key }}">
@@ -730,7 +730,7 @@ function refreshSettingsNeedsConfigBanner() {
 
   const strong = banner.querySelector('strong');
   if (strong) {
-    strong.textContent = `âš  ${remaining} setting${remaining === 1 ? '' : 's'} should be configured on new installs`;
+    strong.textContent = `⚠ ${remaining} setting${remaining === 1 ? '' : 's'} should be configured on new installs`;
   }
 }
 

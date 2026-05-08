@@ -143,7 +143,7 @@
             </td>
             <td>
               {{ feed.channel_count() }}
-              {% if feed.channel_count() > 750 %}<span class="warn">âš </span>{% endif %}
+              {% if feed.channel_count() > 750 %}<span class="warn">⚠</span>{% endif %}
             </td>
           </tr>
           {% endfor %}
@@ -173,7 +173,7 @@
             <td><span class="badge {% if source.is_enabled %}badge-green{% else %}badge-red{% endif %}">{% if source.is_enabled %}Enabled{% else %}Disabled{% endif %}</span></td>
             <td>
               {{ source_output_meta[source.id].channel_count }}
-              {% if source_output_meta[source.id].channel_count > 750 %}<span class="warn">âš </span>{% endif %}
+              {% if source_output_meta[source.id].channel_count > 750 %}<span class="warn">⚠</span>{% endif %}
             </td>
             <td style="color:var(--text-muted)" id="last-scraped-{{ source.id }}">{{ source.last_scraped_at | localtime }}</td>
             {% set nxt = source.next_scrape_at() %}
@@ -249,7 +249,7 @@
       if (!el) return;
       if (lastError) {
         el.className = 'scrape-status';
-        el.innerHTML = `<span class="status-text" style="color:var(--danger)">âš  ${lastError}</span>`;
+        el.innerHTML = `<span class="status-text" style="color:var(--danger)">⚠ ${lastError}</span>`;
         setTimeout(() => { el.innerHTML = ''; el.className = 'scrape-status'; }, 12000);
       } else {
         el.className = 'scrape-status';

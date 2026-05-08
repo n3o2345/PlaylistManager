@@ -824,7 +824,7 @@ async function checkInlineChnumConflict(feedId) {
     const border = conflict ? 'var(--danger)' : 'var(--surface-5)';
     const nameColor = conflict ? 'var(--danger)' : 'var(--text-soft)';
     return `<div style="display:inline-flex;flex-direction:column;border:1px solid ${border};border-radius:6px;padding:0.2rem 0.5rem;background:var(--bg)">
-      <span style="font-size:0.78rem;font-weight:600;color:${nameColor}">${conflict ? 'âš  ' : ''}${r.feed_name}</span>
+      <span style="font-size:0.78rem;font-weight:600;color:${nameColor}">${conflict ? '⚠ ' : ''}${r.feed_name}</span>
       <span style="font-size:0.7rem;color:var(--text-muted)">${r.start.toLocaleString()}–${r.end.toLocaleString()}${gnBadge}</span>
     </div>`;
   };

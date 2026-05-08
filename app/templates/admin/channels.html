@@ -1205,7 +1205,7 @@
         <div class="filter-actions">
           <button type="submit" class="btn-apply">Apply</button>
           <a class="clear" href="/admin/channels">Clear</a>
-          <button type="button" class="btn-resolve-dupes" onclick="openResolveDupesModal()">âš¡ Resolve Dupes</button>
+          <button type="button" class="btn-resolve-dupes" onclick="openResolveDupesModal()">⚡ Resolve Dupes</button>
         </div>
       </div>
       <details class="toolbar-advanced" {% if feed_filter or category_filter or enabled_filter or presence_filter or drm_filter or language_filter or country_filter or gracenote_filter or gracenote_mode_filter or duplicates_filter or new_filter or epg_filter or resolution_filter %}open{% endif %}>
@@ -1298,7 +1298,7 @@
             <label class="filter-label" for="duplicates-filter">Duplicates</label>
             <select id="duplicates-filter" name="duplicates">
               <option value="">Normal list</option>
-              <option value="1" {% if duplicates_filter == '1' %}selected{% endif %}>âš  Duplicates only</option>
+              <option value="1" {% if duplicates_filter == '1' %}selected{% endif %}>⚠ Duplicates only</option>
               <option value="unique" {% if duplicates_filter == 'unique' %}selected{% endif %}>✓ Unique only</option>
             </select>
           </div>
@@ -1385,9 +1385,9 @@
       {% if not (search or source_filter or feed_filter or category_filter or enabled_filter or presence_filter or drm_filter or language_filter or country_filter or gracenote_filter or gracenote_mode_filter or duplicates_filter in ('1', 'unique') or new_filter in ('3','7','14') or epg_filter) %}
       <span class="filter-chip"><strong>View</strong>All channels</span>
       {% endif %}
-      <button type="button" class="btn-hide-disabled{% if enabled_filter == '1' %} active{% endif %}" onclick="toggleHideDisabled()">{% if enabled_filter == '1' %}â—‰ Hiding disabled{% else %}â—‹ Hide disabled{% endif %}</button>
-      <button type="button" class="btn-hide-disabled{% if presence_filter == 'enabled_inactive' %} active{% endif %}" onclick="togglePresence('enabled_inactive')">{% if presence_filter == 'enabled_inactive' %}â—‰ Enabled + inactive{% else %}â—‹ Enabled + inactive{% endif %}</button>
-      <button type="button" class="btn-hide-disabled{% if presence_filter == 'missed' %} active{% endif %}" onclick="togglePresence('missed')">{% if presence_filter == 'missed' %}â—‰ Missed recently{% else %}â—‹ Missed recently{% endif %}</button>
+      <button type="button" class="btn-hide-disabled{% if enabled_filter == '1' %} active{% endif %}" onclick="toggleHideDisabled()">{% if enabled_filter == '1' %}◉ Hiding disabled{% else %}○ Hide disabled{% endif %}</button>
+      <button type="button" class="btn-hide-disabled{% if presence_filter == 'enabled_inactive' %} active{% endif %}" onclick="togglePresence('enabled_inactive')">{% if presence_filter == 'enabled_inactive' %}◉ Enabled + inactive{% else %}○ Enabled + inactive{% endif %}</button>
+      <button type="button" class="btn-hide-disabled{% if presence_filter == 'missed' %} active{% endif %}" onclick="togglePresence('missed')">{% if presence_filter == 'missed' %}◉ Missed recently{% else %}○ Missed recently{% endif %}</button>
     </div>
 
     <!-- Bulk action bar (shown when rows selected) -->
@@ -1421,7 +1421,7 @@
             <th style="width:1px;white-space:nowrap">
               <select class="col-filter-select{% if duplicates_filter %} col-filter-active{% endif %}" onchange="filterBy('duplicates', this.value)" title="Filter by duplicate status">
                 <option value="">DUP</option>
-                <option value="1" {% if duplicates_filter == '1' %}selected{% endif %}>âš  Dupes</option>
+                <option value="1" {% if duplicates_filter == '1' %}selected{% endif %}>⚠ Dupes</option>
                 <option value="unique" {% if duplicates_filter == 'unique' %}selected{% endif %}>✓ Unique</option>
               </select>
             </th>
@@ -2078,7 +2078,7 @@
       drm:     '🔒 DRM',
       dead:    '💀 Dead',
       vod:     '📼 VOD',
-      no_data: 'âš  No Data',
+      no_data: '⚠ No Data',
       error:   '✕ Error',
     };
 
@@ -3206,7 +3206,7 @@
   <!-- ── Resolve Duplicates Modal ───────────────────────────────────────── -->
   <div class="modal-overlay" id="resolve-modal" onclick="closeResolveDupesModal(event)">
     <div class="modal-box">
-      <h2>âš¡ Resolve Duplicates</h2>
+      <h2>⚡ Resolve Duplicates</h2>
       <p class="modal-sub">Drag to set source priority. The top source wins each strict duplicate group and the others will be disabled. Strict matching is case-insensitive and ignores trailing <strong>by …</strong> or <strong>presented by …</strong>. Softer brand variants marked <strong>DUP?</strong>, such as TV/Channel/Network differences, are not auto-resolved here.</p>
       <div id="resolve-modal-body" class="modal-loading">Loading…</div>
     </div>
@@ -3260,7 +3260,7 @@
             <li class="priority-item" draggable="true" data-idx="${i}"
                 ondragstart="onDragStart(event)" ondragover="onDragOver(event)"
                 ondrop="onDrop(event)" ondragleave="onDragLeave(event)">
-              <span class="drag-handle">â ¿</span>
+              <span class="drag-handle">⠿</span>
               <span class="rank">${i + 1}</span>
               <span class="src-name">${s.display_name}</span>
               ${isRec ? '<span class="rec-badge">RECOMMENDED</span>' : ''}
