@@ -151,9 +151,11 @@ class TVApp2Scraper(BaseScraper):
         """
         Parse the tvapp2 M3U playlist into ChannelData objects.
 
-        tvapp2 serves playlist.m3u8 with direct stream URLs already embedded —
-        it is a static file host, not a streaming proxy.  We store the stream
-        URL exactly as tvapp2 provides it.
+        tvapp2 provides multiple entries per channel — one per upstream source
+        (TVPass, TheTVApp, MoveOnJoy, etc.) — differentiated by group-title.
+        Each entry becomes a separate FastChannels channel so all backup streams
+        are available.  source_channel_id is made unique by combining tvg-id
+        with the group slug so duplicates across sources are preserved.
         """
         channels: list[ChannelData] = []
         seen_ids: set[str] = set()
@@ -190,10 +192,19 @@ class TVApp2Scraper(BaseScraper):
             if not name:
                 continue
 
-            source_channel_id = tvg_id or name.lower().replace(' ', '-')
+            # Build a unique channel ID per source group so backup streams
+            # aren't collapsed.  e.g. tvg-id "111871.571ACC" from group
+            # "TVPass" → "111871.571ACC.tvpass", from "TheTVApp" → "111871.571ACC.thetvapp"
+            base_id = tvg_id or name.lower().replace(' ', '-')
+            group_slug = (group or '').lower().replace(' ', '').replace('/', '')
+            source_channel_id = f'{base_id}.{group_slug}' if group_slug else base_id
 
+            # If still colliding (same channel, same group twice), append a counter.
             if source_channel_id in seen_ids:
-                continue
+                n = 2
+                while f'{source_channel_id}.{n}' in seen_ids:
+                    n += 1
+                source_channel_id = f'{source_channel_id}.{n}'
             seen_ids.add(source_channel_id)
 
             channels.append(ChannelData(
@@ -206,7 +217,7 @@ class TVApp2Scraper(BaseScraper):
                 language          = infer_language_from_metadata(name, group),
                 country           = 'US',
                 stream_type       = 'hls',
-                gracenote_id      = resolve_gracenote('tvapp2', lookup_key=source_channel_id),
+                gracenote_id      = resolve_gracenote('tvapp2', lookup_key=base_id),
                 tags              = [group] if group else [],
             ))
 
@@ -225,8 +236,10 @@ class TVApp2Scraper(BaseScraper):
         """
         Fetch EPG from tvapp2's /epg endpoint (uncompressed XMLTV).
 
-        Channel IDs in the XMLTV match the tvg-id values in /playlist,
-        which we store as source_channel_id — so linkage is automatic.
+        The XMLTV uses bare tvg-ids as channel identifiers (e.g. "111871.571ACC"),
+        but our source_channel_ids are suffixed per group (e.g. "111871.571ACC.tvpass",
+        "111871.571ACC.thetvapp").  We build a mapping from bare id → all suffixed ids
+        and fan out each program entry to every variant so all backup streams get EPG.
         """
         url = f'{self._base_url}/epg'
         try:
@@ -237,7 +250,63 @@ class TVApp2Scraper(BaseScraper):
             logger.error('[tvapp2] failed to fetch EPG from %s: %s', url, e)
             return []
 
-        return _parse_xmltv(xml_text)
+        # Map bare tvg-id → list of suffixed source_channel_ids for this scrape.
+        # e.g. "111871.571ACC" → ["111871.571ACC.tvpass", "111871.571ACC.thetvapp"]
+        from collections import defaultdict
+        bare_to_suffixed: dict[str, list[str]] = defaultdict(list)
+        for ch in channels:
+            # The base_id is everything before the first group-slug dot suffix.
+            # We reconstruct it by stripping the group_slug we appended in _parse_playlist.
+            # Simpler: look for the channel's tvg-id stored in its source_channel_id prefix.
+            # Since source_channel_id = f"{base_id}.{group_slug}", and base_id may itself
+            # contain dots (e.g. "111871.571ACC"), we stored base_id via gracenote lookup key.
+            # Easiest reconstruction: find the longest prefix of source_channel_id that
+            # matches a known bare_id from the XMLTV — but we don't have those yet.
+            # Instead: any channel whose source_channel_id starts with a bare_id is a variant.
+            # We'll build the reverse map after parsing, below.
+            bare_to_suffixed[ch.source_channel_id].append(ch.source_channel_id)
+
+        raw_programs = _parse_xmltv(xml_text)
+
+        # Build bare_id → [suffixed_ids] from the channels list.
+        # source_channel_id format: "{base_id}.{group_slug}" where base_id is the tvg-id.
+        # We match by checking if a channel's source_channel_id starts with bare_id + '.'.
+        bare_ids = {prog.source_channel_id for prog in raw_programs}
+        id_map: dict[str, list[str]] = defaultdict(list)
+        for ch in channels:
+            cid = ch.source_channel_id
+            # Find which bare_id this channel belongs to.
+            for bare in bare_ids:
+                if cid == bare or cid.startswith(bare + '.'):
+                    id_map[bare].append(cid)
+                    break
+            else:
+                # No match — include as-is so it at least tries to link.
+                id_map[cid].append(cid)
+
+        # Fan out: one ProgramData per suffixed channel id.
+        programs: list[ProgramData] = []
+        for prog in raw_programs:
+            targets = id_map.get(prog.source_channel_id)
+            if not targets:
+                continue
+            for target_id in targets:
+                programs.append(ProgramData(
+                    source_channel_id = target_id,
+                    title             = prog.title,
+                    start_time        = prog.start_time,
+                    end_time          = prog.end_time,
+                    description       = prog.description,
+                    category          = prog.category,
+                    poster_url        = prog.poster_url,
+                    rating            = prog.rating,
+                    season            = prog.season,
+                    episode           = prog.episode,
+                    episode_title     = prog.episode_title,
+                ))
+
+        logger.info('[tvapp2] fanned out %d EPG entries across %d channel variants', len(programs), len(channels))
+        return programs
 
     def resolve(self, raw_url: str) -> str:
         """
