@@ -21,6 +21,57 @@ for i in $(seq 1 30); do
     sleep 0.5
 done
 
+# ── tvapp2 internal daemon ────────────────────────────────────────────────────
+# tvapp2 is bundled inside the image at /opt/tvapp2.  It runs as a background
+# Node.js process on localhost:4124 (TVAPP2_PORT).  FastChannels scrapers call
+# it directly — no external network dependency or separate container needed.
+#
+# Set TVAPP2_ENABLED=0 in your environment to disable it (e.g. if you prefer
+# to run tvapp2 externally and configure the host in the FastChannels admin UI).
+if [ "${TVAPP2_ENABLED:-1}" = "1" ]; then
+    echo "⏳ Starting embedded tvapp2..."
+
+    # tvapp2 stores its working files (playlist.m3u8, xmltv.xml, urls.txt) in
+    # the directory it's launched from.  Use /data/tvapp2 so they survive
+    # container restarts alongside the FastChannels database.
+    mkdir -p /data/tvapp2
+
+    (
+        cd /opt/tvapp2
+        while true; do
+            WEB_IP=127.0.0.1 \
+            WEB_PORT="${TVAPP2_PORT:-4124}" \
+            STREAM_QUALITY="${TVAPP2_STREAM_QUALITY:-hd}" \
+            LOG_LEVEL="${TVAPP2_LOG_LEVEL:-2}" \
+            FILE_URL="/data/tvapp2/urls.txt" \
+            FILE_M3U="/data/tvapp2/playlist.m3u8" \
+            FILE_EPG="/data/tvapp2/xmltv.xml" \
+            FILE_GZP="/data/tvapp2/xmltv.xml.gz" \
+                node index.js >> /var/log/tvapp2.log 2>&1
+            echo "⚠ tvapp2 exited (code $?) — restarting in 5s" >&2
+            sleep 5
+        done
+    ) &
+    TVAPP2_PID=$!
+
+    # Wait for tvapp2's health endpoint to respond before continuing.
+    # This ensures the playlist is ready before FastChannels first scrape runs.
+    TVAPP2_URL="http://127.0.0.1:${TVAPP2_PORT:-4124}"
+    echo "⏳ Waiting for tvapp2 at ${TVAPP2_URL}..."
+    for i in $(seq 1 60); do
+        if curl -sf "${TVAPP2_URL}/api/health" > /dev/null 2>&1; then
+            echo "✅ tvapp2 ready (${i}s)"
+            break
+        fi
+        if [ "$i" = "60" ]; then
+            echo "⚠ tvapp2 did not become ready in 120s — continuing anyway (check /var/log/tvapp2.log)"
+        fi
+        sleep 2
+    done
+else
+    echo "ℹ tvapp2 internal daemon disabled (TVAPP2_ENABLED=0)"
+fi
+
 # Ensure the default SQLite data directory exists before app startup.
 mkdir -p /data
 

@@ -7,6 +7,14 @@ services:
       - '5523:5523'
     volumes:
       - /mnt/System/Apps/FastChannels/db_data:/data
+    environment:
+      # ── Embedded tvapp2 daemon ──────────────────────────────────────────────
+      # tvapp2 runs internally on localhost:4124. Set TVAPP2_ENABLED=0 to
+      # disable it (e.g. if you run tvapp2 as a separate container instead).
+      TVAPP2_ENABLED: 1
+      TVAPP2_STREAM_QUALITY: hd     # hd | sd
+      TVAPP2_LOG_LEVEL: 2           # 0=off … 6=verbose
+      # TVAPP2_PORT: 4124           # internal port (no need to expose externally)
     healthcheck:
       test:
         - CMD-SHELL

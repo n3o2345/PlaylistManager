@@ -38,6 +38,19 @@ play_bp = Blueprint('play', __name__)
 
 _MANIFEST_PROXY_SOURCES = {'pluto', 'localnow'}
 
+# Pluto SSAI CDN hosts whose segment URLs contain short-lived signed tokens.
+# During ad-break transitions Pluto's stitcher rotates these tokens, so any
+# absolute segment URL the client received from a previous variant refresh will
+# 403 once the token rolls.  We proxy segments for these hosts so the client
+# always fetches through FastChannels, which re-resolves a fresh manifest and
+# picks up the new signing credentials on every segment request.
+_PLUTO_SEGMENT_CDN_HOSTS = frozenset({
+    'cfd-v4-service-channel-stitcher-use1-1.prd.pluto.tv',
+    'cfd-v4-service-channel-stitcher-use1-0.prd.pluto.tv',
+    'jmpromo-d.openx.net',
+    # Match any *.prd.pluto.tv stitcher variant — checked with endswith() below
+})
+
 def _client_ip() -> str:
     forwarded = (request.headers.get('X-Forwarded-For') or '').strip()
     if forwarded:
@@ -217,6 +230,69 @@ def distro_manifest_proxy(channel_id: str):
         mimetype='application/vnd.apple.mpegurl',
         headers={'Cache-Control': 'no-cache'},
     )
+
+
+def _is_pluto_cdn_host(netloc: str) -> bool:
+    """Return True for Pluto SSAI CDN hosts that have rotating signed segment URLs."""
+    netloc = netloc.lower().split(':')[0]
+    if netloc in _PLUTO_SEGMENT_CDN_HOSTS:
+        return True
+    # Catch additional *.prd.pluto.tv stitcher hostnames not listed explicitly
+    return netloc.endswith('.prd.pluto.tv') or 'jmpromo' in netloc
+
+
+_PLUTO_SEG_HEADERS = {
+    'User-Agent':  'PlutoTV/5.0 (Linux; Android 9)',
+    'Origin':      'https://pluto.tv',
+    'Referer':     'https://pluto.tv/',
+}
+
+
+@play_bp.route('/play/pluto/segment')
+def pluto_segment_proxy():
+    """
+    Segment proxy for Pluto SSAI CDN segments.
+
+    Pluto's server-side ad insertion stitcher rotates CDN signing tokens at
+    ad-break boundaries.  Clients that hold a direct absolute segment URL from
+    a previous variant playlist fetch will receive 403s once the token rolls
+    (typically every 6–10 seconds during commercial transitions), causing the
+    stream to freeze until the player gives up or retries from scratch.
+
+    By routing all Pluto segments through this proxy the player always fetches
+    from a stable FastChannels URL.  The actual upstream segment URL is encoded
+    in the ?url= query parameter and may be updated by the variant proxy on
+    each manifest refresh — so the client sees a consistent URL while the
+    upstream CDN address stays current.
+    """
+    raw = request.args.get('url', '')
+    if not raw:
+        abort(400)
+    url = _unquote(raw)
+    parsed = urlsplit(url)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        abort(400)
+    if _PRIVATE_IP_RE.match(parsed.netloc.split(':')[0]):
+        logger.warning('[pluto-seg-proxy] blocked SSRF attempt to: %s', parsed.netloc)
+        abort(403)
+    try:
+        r = _requests.get(url, headers=_PLUTO_SEG_HEADERS, timeout=15, stream=True)
+        if r.status_code == 403:
+            # Token may have just rotated — log for diagnostics; client will retry
+            # via the next variant refresh which will supply a new signed URL.
+            logger.debug('[pluto-seg-proxy] 403 on segment (token likely rotated): %s', url[:100])
+            abort(403)
+        if r.status_code != 200:
+            abort(r.status_code)
+        return Response(
+            r.iter_content(65536),
+            status=200,
+            content_type=r.headers.get('Content-Type', 'video/MP2T'),
+            headers={'Cache-Control': 'no-cache'},
+        )
+    except Exception as e:
+        logger.warning('[pluto-seg-proxy] fetch failed for %s: %s', url[:80], e)
+        abort(502)
 
 
 def _stirr_session() -> _requests.Session:
@@ -426,16 +502,51 @@ def _rewrite_uri_attrs(line: str, base_url: str) -> str:
     return re.sub(r'URI="([^"]+)"', _rewrite, line)
 
 
-def _rewrite_media_playlist(text: str, playlist_url: str) -> str:
+def _rewrite_media_playlist(text: str, playlist_url: str,
+                            seg_proxy_fn=None) -> str:
+    """
+    Rewrite a media (variant) playlist so all URLs are absolute.
+
+    If seg_proxy_fn is provided it is called with the absolute segment URL
+    and should return a proxied URL.  Used for sources (e.g. Pluto) whose
+    CDN segment signing tokens rotate mid-stream — routing segments through
+    FastChannels prevents clients from 403-freezing when the token rolls.
+    """
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith('#'):
-            line = urljoin(playlist_url, stripped)
+            abs_url = urljoin(playlist_url, stripped)
+            line = seg_proxy_fn(abs_url) if seg_proxy_fn else abs_url
         elif stripped.startswith('#') and 'URI="' in stripped:
             line = _rewrite_uri_attrs(line, playlist_url)
         lines.append(line)
     return '\n'.join(lines)
+
+
+def _make_pluto_seg_proxy_fn(source_name: str):
+    """
+    Return a segment URL rewriter for Pluto that routes SSAI CDN segments
+    through the FastChannels /play/pluto/segment proxy.
+
+    Pluto's stitcher embeds signed CDN URLs whose tokens rotate at ad-break
+    boundaries.  If the client holds a stale absolute CDN URL it receives a
+    403 and the stream freezes for the duration of the commercial block.
+    Routing segments through FastChannels gives us a stable URL surface while
+    letting the variant proxy supply a fresh signed URL on each manifest poll.
+
+    Non-Pluto CDN segments (subtitles, fallback manifests) are returned as
+    absolute direct URLs and are not proxied — they don't carry rotating tokens.
+    """
+    base = request.host_url.rstrip('/')
+
+    def _proxy(abs_url: str) -> str:
+        parsed = urlsplit(abs_url)
+        if _is_pluto_cdn_host(parsed.netloc):
+            return f'{base}/play/pluto/segment?url={_quote(abs_url, safe="")}'
+        return abs_url
+
+    return _proxy
 
 
 @play_bp.route('/play/<source_name>/<channel_id>/proxy.m3u8')
@@ -465,8 +576,9 @@ def hls_manifest_proxy(source_name: str, channel_id: str):
     text = master_r.text
 
     if '#EXT-X-STREAM-INF' not in text:
+        seg_proxy_fn = _make_pluto_seg_proxy_fn(source_name) if source_name == 'pluto' else None
         return Response(
-            _rewrite_media_playlist(text, effective_master_url),
+            _rewrite_media_playlist(text, effective_master_url, seg_proxy_fn),
             mimetype='application/vnd.apple.mpegurl',
             headers=_manifest_cache_headers(),
         )
@@ -515,8 +627,9 @@ def hls_variant_proxy(source_name: str, channel_id: str):
     variant_url = variants[min(index, len(variants) - 1)] if variants else master_r.url
     variant_r = _fetch_manifest(variant_url, session)
 
+    seg_proxy_fn = _make_pluto_seg_proxy_fn(source_name) if source_name == 'pluto' else None
     return Response(
-        _rewrite_media_playlist(variant_r.text, variant_r.url),
+        _rewrite_media_playlist(variant_r.text, variant_r.url, seg_proxy_fn),
         mimetype='application/vnd.apple.mpegurl',
         headers=_manifest_cache_headers(),
     )
