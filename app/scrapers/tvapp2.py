@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import logging
 import re
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote as _quote, urlsplit
 
@@ -263,9 +265,24 @@ class TVApp2Scraper(BaseScraper):
         return self._parse_playlist(m3u_text)
 
     def fetch_epg(self, channels: list[ChannelData], **kwargs) -> list[ProgramData]:
-        # tvapp2 does not expose EPG data.  FastChannels will use its XMLTV
-        # sources (e.g. Gracenote mapping) for guide data on tvapp2 channels.
-        return []
+        """
+        Fetch EPG from tvapp2's built-in XMLTV endpoint (GET /xmltv.xml).
+
+        tvapp2 hosts its own guide data — the same data it used to build the
+        M3U playlist — at /xmltv.xml (configurable via FILE_EPG env var in
+        tvapp2, but /xmltv.xml is the default).  Channel IDs in the XMLTV file
+        match the tvg-id values in the M3U, which we store as source_channel_id.
+        """
+        url = f'{self._base_url}/xmltv.xml'
+        try:
+            r = self.session.get(url, timeout=60)
+            r.raise_for_status()
+            xml_text = r.text
+        except Exception as e:
+            logger.error('[tvapp2] failed to fetch EPG from %s: %s', url, e)
+            return []
+
+        return _parse_xmltv(xml_text)
 
     def resolve(self, raw_url: str) -> str:
         """
@@ -334,3 +351,116 @@ def _normalise_group(group: Optional[str]) -> Optional[str]:
         return None
     key = group.lower().strip()
     return _GROUP_MAP.get(key, group.title())
+
+
+# ── XMLTV EPG parsing ─────────────────────────────────────────────────────────
+
+# XMLTV timestamps: "20240315143000 +0000" or "20240315143000 +0500"
+_XMLTV_TS_RE = re.compile(r'(\d{14})\s*([+-]\d{4})?')
+
+
+def _parse_xmltv_ts(value: str | None) -> Optional[datetime]:
+    """Parse a XMLTV timestamp string into a UTC-aware datetime."""
+    if not value:
+        return None
+    m = _XMLTV_TS_RE.match(value.strip())
+    if not m:
+        return None
+    dt_str, tz_str = m.group(1), m.group(2) or '+0000'
+    try:
+        # Parse naive datetime then apply the offset manually.
+        naive = datetime.strptime(dt_str, '%Y%m%d%H%M%S')
+        sign = 1 if tz_str[0] == '+' else -1
+        h, mn = int(tz_str[1:3]), int(tz_str[3:5])
+        offset_secs = sign * (h * 3600 + mn * 60)
+        from datetime import timedelta
+        aware = naive.replace(tzinfo=timezone.utc) - timedelta(seconds=offset_secs)
+        return aware
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_xmltv(xml_text: str) -> list[ProgramData]:
+    """
+    Parse a standard XMLTV document into ProgramData objects.
+
+    Handles the subset of XMLTV that tvapp2 emits:
+      <programme start="..." stop="..." channel="...">
+        <title>...</title>
+        <desc>...</desc>
+        <category>...</category>
+        <icon src="..."/>
+        <episode-num system="xmltv_ns">S.E.</episode-num>
+        <rating><value>...</value></rating>
+      </programme>
+    """
+    programs: list[ProgramData] = []
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        logger.error('[tvapp2] XMLTV parse error: %s', e)
+        return programs
+
+    for prog in root.findall('programme'):
+        channel_id = prog.get('channel')
+        if not channel_id:
+            continue
+
+        start = _parse_xmltv_ts(prog.get('start'))
+        stop  = _parse_xmltv_ts(prog.get('stop'))
+        if not start or not stop:
+            continue
+
+        title_el = prog.find('title')
+        title = (title_el.text or '').strip() if title_el is not None else ''
+        if not title:
+            continue
+
+        desc_el = prog.find('desc')
+        description = (desc_el.text or '').strip() if desc_el is not None else None
+
+        category_el = prog.find('category')
+        category = (category_el.text or '').strip() if category_el is not None else None
+
+        icon_el = prog.find('icon')
+        poster_url = icon_el.get('src') if icon_el is not None else None
+
+        rating_el = prog.find('.//rating/value')
+        rating = (rating_el.text or '').strip() if rating_el is not None else None
+
+        # Parse episode number from xmltv_ns system: "S.E.P" (0-indexed)
+        season = episode = None
+        for ep_el in prog.findall('episode-num'):
+            if ep_el.get('system') == 'xmltv_ns' and ep_el.text:
+                parts = ep_el.text.split('.')
+                try:
+                    if len(parts) >= 1 and parts[0].strip():
+                        season = int(parts[0].strip()) + 1
+                except ValueError:
+                    pass
+                try:
+                    if len(parts) >= 2 and parts[1].strip():
+                        episode = int(parts[1].strip()) + 1
+                except ValueError:
+                    pass
+                break
+
+        sub_title_el = prog.find('sub-title')
+        episode_title = (sub_title_el.text or '').strip() if sub_title_el is not None else None
+
+        programs.append(ProgramData(
+            source_channel_id = channel_id,
+            title             = title,
+            start_time        = start,
+            end_time          = stop,
+            description       = description or None,
+            category          = category or None,
+            poster_url        = poster_url or None,
+            rating            = rating or None,
+            season            = season,
+            episode           = episode,
+            episode_title     = episode_title or None,
+        ))
+
+    logger.info('[tvapp2] parsed %d EPG entries from XMLTV', len(programs))
+    return programs
