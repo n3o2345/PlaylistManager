@@ -729,6 +729,11 @@ def hls_manifest_proxy(source_name: str, channel_id: str):
         if stripped and not stripped.startswith('#'):
             line = f'{base_url}/play/{source_name}/{encoded_id}/variant.m3u8?index={variant_index}'
             variant_index += 1
+        elif stripped.startswith('#EXT-X-MEDIA') and 'URI="' in stripped and (
+                'Audio-Description' in stripped or 'Audio Description' in stripped):
+            # Strip Audio Description rendition — causes corrupt packet errors
+            # at every Pluto SSAI ad boundary due to DTS resets on the track.
+            continue
         elif stripped.startswith('#') and 'URI="' in stripped:
             line = _rewrite_uri_attrs(line, effective_master_url)
         lines.append(line)
