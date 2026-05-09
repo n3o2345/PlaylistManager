@@ -92,6 +92,10 @@ def _parse_gracenote_id(ch) -> str | None:
     if getattr(ch, 'gracenote_mode', None) == 'off':
         return None
 
+    # Never match MOJ channels to Gracenote — they go to the standard playlist
+    if '(MOJ)' in (ch.name or ''):
+        return None
+
     # 1. Dedicated column (preferred)
     gid = (ch.gracenote_id or '').strip()
     if gid and _GRACENOTE_PREFIX_RE.match(gid):
