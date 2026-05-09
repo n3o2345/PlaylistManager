@@ -70,9 +70,9 @@ class TVApp2Scraper(BaseScraper):
 
     source_name     = 'tvapp2'
     display_name    = 'TVApp2'
-    scrape_interval = 60           # re-fetch playlist hourly; CDN tokens are short-lived
+    scrape_interval = 720          # channel list changes infrequently; tokens are live via /channel?url=
     config_required = True
-    stream_audit_enabled = False   # tokens are time-limited; static audit is unreliable
+    stream_audit_enabled = False   # tokens are fetched fresh by tvapp2 on each play; static audit unreliable
 
     config_schema = [
         ConfigField(
@@ -165,13 +165,9 @@ class TVApp2Scraper(BaseScraper):
         """
         Parse the tvapp2 M3U playlist into ChannelData objects.
 
-        tvapp2 serves direct signed CDN stream URLs in the playlist.
-        We store the raw CDN URL as stream_url.  Because these tokens
-        expire, resolve() re-fetches the playlist at play time to get
-        a fresh URL for the requested channel.
-
-        We also store the tvg-id (or a slug derived from it) so that
-        resolve() can look up the right entry in a freshly fetched playlist.
+        tvapp2 serves playlist.m3u8 with direct stream URLs already embedded —
+        it is a static file host, not a streaming proxy.  We store the stream
+        URL exactly as tvapp2 provides it.
         """
         channels: list[ChannelData] = []
         seen_ids: set[str] = set()
@@ -187,7 +183,6 @@ class TVApp2Scraper(BaseScraper):
 
             attrs = _parse_extinf(line)
 
-            # Advance to the stream URL line (skip blank lines / extra tags)
             j = i + 1
             stream_line = ''
             while j < len(lines):
@@ -207,28 +202,22 @@ class TVApp2Scraper(BaseScraper):
             group    = attrs.get('group-title') or None
 
             if not name:
-                logger.debug('[tvapp2] skipping entry with no name: %s', stream_line[:80])
                 continue
 
-            # Use tvg-id as the stable channel identifier when available;
-            # otherwise derive a slug from the name.
             source_channel_id = tvg_id or name.lower().replace(' ', '-')
 
             if source_channel_id in seen_ids:
-                logger.debug('[tvapp2] duplicate channel id %s, skipping', source_channel_id)
                 continue
             seen_ids.add(source_channel_id)
-
-            language = infer_language_from_metadata(name, group)
 
             channels.append(ChannelData(
                 source_channel_id = source_channel_id,
                 name              = name,
-                stream_url        = stream_line,   # raw signed CDN URL
+                stream_url        = stream_line,
                 logo_url          = logo_url,
                 slug              = source_channel_id,
                 category          = _normalise_group(group),
-                language          = language,
+                language          = infer_language_from_metadata(name, group),
                 country           = 'US',
                 stream_type       = 'hls',
                 gracenote_id      = resolve_gracenote('tvapp2', lookup_key=source_channel_id),
@@ -273,52 +262,23 @@ class TVApp2Scraper(BaseScraper):
 
     def resolve(self, raw_url: str) -> str:
         """
-        Return a playable CDN URL for this channel.
+        Return the stream URL as-is.
 
-        tvapp2 pre-fetches signed CDN URLs from TheTVApp/TVPass and stores them
-        in playlist.m3u8.  These tokens are valid for the lifetime of a tvapp2
-        sync cycle (configured via TASK_CRON_SYNC, default every 3 days).
+        tvapp2 embeds direct stream URLs in playlist.m3u8 — no proxy wrapping
+        or token reconstruction needed.
 
-        FastChannels re-scrapes tvapp2 on scrape_interval (60 min) so the DB
-        always has URLs from the most recent tvapp2 sync.  resolve() just returns
-        the stored URL — re-fetching the playlist here on every play request would
-        return the same tokens (they don't rotate on demand) and just adds latency.
-
-        Legacy tvapp2:// scheme: channels scraped before this fix have URLs like
-          tvapp2://https://thetvapp.to/tv/acc-network-live-stream/
-        For those we do a one-time playlist fetch to migrate to a real CDN URL.
-        After the next scheduled rescrape they'll be updated in the DB automatically.
+        Legacy tvapp2:// entries in the DB (from old scraper versions) are
+        unresolvable; return empty so play.py 404s cleanly instead of
+        redirecting to garbage. They will be corrected on next rescrape.
         """
-        # Current format — already a real CDN URL, return as-is.
-        if not raw_url.startswith('tvapp2://'):
-            return raw_url
-
-        # Legacy format — do a one-time fetch to get the real CDN URL.
-        logger.info('[tvapp2] resolve: migrating legacy tvapp2:// URL for %s', raw_url[9:60])
-        m3u_text = self._fetch_playlist()
-        if not m3u_text:
-            logger.warning('[tvapp2] resolve: playlist fetch failed for legacy URL')
-            return raw_url
-
-        fresh_channels = self._parse_playlist(m3u_text)
-        slug_map = {ch.slug: ch.stream_url for ch in fresh_channels}
-        id_map   = {ch.source_channel_id: ch.stream_url for ch in fresh_channels}
-
-        page_url = raw_url[len('tvapp2://'):]
-        slug = urlsplit(page_url).path.strip('/').split('/')[-1]
-
-        if slug in slug_map:
-            logger.debug('[tvapp2] resolve: legacy slug %r → CDN URL', slug)
-            return slug_map[slug]
-        if slug in id_map:
-            logger.debug('[tvapp2] resolve: legacy id %r → CDN URL', slug)
-            return id_map[slug]
-
-        logger.warning('[tvapp2] resolve: no playlist match for legacy slug %r', slug)
+        if raw_url.startswith('tvapp2://'):
+            logger.warning('[tvapp2] resolve: stale tvapp2:// URL — trigger a rescrape (%s)', raw_url[9:80])
+            return ''
         return raw_url
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 _GROUP_MAP = {
     'sports':         'Sports',
