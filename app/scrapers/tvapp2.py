@@ -207,6 +207,15 @@ class TVApp2Scraper(BaseScraper):
                 source_channel_id = f'{source_channel_id}.{n}'
             seen_ids.add(source_channel_id)
 
+            # tvapp2 tvg-ids are formatted "<gracenote_station_id>.<call_letters>"
+            # e.g. "111871.571ACC" → station id "111871" is a valid Gracenote TMS ID.
+            # Extract it directly so no CSV map entry is needed.
+            gracenote_id = resolve_gracenote(
+                'tvapp2',
+                upstream_id = _extract_gracenote_id(tvg_id),
+                lookup_key  = base_id,
+            )
+
             channels.append(ChannelData(
                 source_channel_id = source_channel_id,
                 name              = name,
@@ -217,7 +226,7 @@ class TVApp2Scraper(BaseScraper):
                 language          = infer_language_from_metadata(name, group),
                 country           = 'US',
                 stream_type       = 'hls',
-                gracenote_id      = resolve_gracenote('tvapp2', lookup_key=base_id),
+                gracenote_id      = gracenote_id,
                 tags              = [group] if group else [],
             ))
 
@@ -310,22 +319,39 @@ class TVApp2Scraper(BaseScraper):
 
     def resolve(self, raw_url: str) -> str:
         """
-        Return the stream URL as-is.
+        Return a playable URL for this channel.
 
-        tvapp2 embeds direct stream URLs in playlist.m3u8 — no proxy wrapping
-        or token reconstruction needed.
+        FastChannels proxies tvapp2 streams internally (tvapp2 is in
+        _MANIFEST_PROXY_SOURCES), so the URL only needs to be reachable
+        from inside the container — 127.0.0.1:4124 is fine.
 
-        Legacy tvapp2:// entries in the DB (from old scraper versions) are
-        unresolvable; return empty so play.py 404s cleanly instead of
-        redirecting to garbage. They will be corrected on next rescrape.
+        Legacy tvapp2:// entries: reconstruct the /channel?url= proxy URL.
         """
         if raw_url.startswith('tvapp2://'):
-            logger.warning('[tvapp2] resolve: stale tvapp2:// URL — trigger a rescrape (%s)', raw_url[9:80])
-            return ''
+            from urllib.parse import quote as _quote
+            page_url = raw_url[len('tvapp2://'):]
+            return f'{self._base_url}/channel?url={_quote(page_url, safe="")}'
         return raw_url
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _extract_gracenote_id(tvg_id: str) -> str | None:
+    """
+    Extract a Gracenote station ID from a tvapp2 tvg-id.
+
+    tvapp2 uses tvg-ids in the format "<station_id>.<call_letters>",
+    e.g. "111871.571ACC" or "10035.181AETV".  The numeric prefix is a
+    Gracenote TMS station ID (always 5+ digits).  Returning it as
+    upstream_id lets resolve_gracenote() use it directly without a CSV map.
+    """
+    if not tvg_id:
+        return None
+    prefix = tvg_id.split('.')[0]
+    if prefix.isdigit() and len(prefix) >= 5:
+        return prefix
+    return None
 
 
 _GROUP_MAP = {

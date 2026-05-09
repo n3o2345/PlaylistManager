@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 play_bp = Blueprint('play', __name__)
 
-_MANIFEST_PROXY_SOURCES = {'pluto', 'localnow'}
+_MANIFEST_PROXY_SOURCES = {'pluto', 'localnow', 'tvapp2'}
 
 # Pluto SSAI CDN hosts whose segment URLs contain short-lived signed tokens.
 # During ad-break transitions Pluto's stitcher rotates these tokens, so any
@@ -459,15 +459,17 @@ def _resolve_manifest_source(channel: Channel, source_name: str):
     return resolved_url, scraper.session
 
 
-def _is_safe_upstream_url(url: str) -> bool:
+def _is_safe_upstream_url(url: str, *, allow_private: bool = False) -> bool:
     parsed = urlsplit(url)
     if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
         return False
+    if allow_private:
+        return True
     return not _PRIVATE_IP_RE.match(parsed.netloc.split(':')[0])
 
 
-def _fetch_manifest(url: str, session) -> _requests.Response:
-    if not _is_safe_upstream_url(url):
+def _fetch_manifest(url: str, session, *, allow_private: bool = False) -> _requests.Response:
+    if not _is_safe_upstream_url(url, allow_private=allow_private):
         abort(400)
     try:
         r = session.get(url, timeout=10)
@@ -571,7 +573,7 @@ def hls_manifest_proxy(source_name: str, channel_id: str):
     if not master_url or not master_url.startswith(('http://', 'https://')):
         abort(502)
 
-    master_r = _fetch_manifest(master_url, session)
+    master_r = _fetch_manifest(master_url, session, allow_private=(source_name == 'tvapp2'))
     effective_master_url = master_r.url
     text = master_r.text
 
@@ -622,10 +624,10 @@ def hls_variant_proxy(source_name: str, channel_id: str):
     if not master_url or not master_url.startswith(('http://', 'https://')):
         abort(502)
 
-    master_r = _fetch_manifest(master_url, session)
+    master_r = _fetch_manifest(master_url, session, allow_private=(source_name == 'tvapp2'))
     variants = _master_variants(master_r.text, master_r.url)
     variant_url = variants[min(index, len(variants) - 1)] if variants else master_r.url
-    variant_r = _fetch_manifest(variant_url, session)
+    variant_r = _fetch_manifest(variant_url, session, allow_private=(source_name == 'tvapp2'))
 
     seg_proxy_fn = _make_pluto_seg_proxy_fn(source_name) if source_name == 'pluto' else None
     return Response(
