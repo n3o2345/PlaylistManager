@@ -273,62 +273,52 @@ class TVApp2Scraper(BaseScraper):
 
     def resolve(self, raw_url: str) -> str:
         """
-        Re-fetch the tvapp2 playlist and return a fresh signed CDN URL for
-        the channel that originally resolved to raw_url.
+        Return a playable CDN URL for this channel.
 
-        tvapp2 serves direct signed CDN URLs.  These tokens expire (typically
-        within a few hours).  Rather than redirecting the client to a stale
-        stored URL, we hit the playlist fresh on each play request and find
-        the matching channel by tvg-id or stream URL prefix.
+        tvapp2 pre-fetches signed CDN URLs from TheTVApp/TVPass and stores them
+        in playlist.m3u8.  These tokens are valid for the lifetime of a tvapp2
+        sync cycle (configured via TASK_CRON_SYNC, default every 3 days).
 
-        Falls back to the stored raw_url if the playlist fetch fails or the
-        channel can't be found — better than a hard 502 on a transient error.
+        FastChannels re-scrapes tvapp2 on scrape_interval (60 min) so the DB
+        always has URLs from the most recent tvapp2 sync.  resolve() just returns
+        the stored URL — re-fetching the playlist here on every play request would
+        return the same tokens (they don't rotate on demand) and just adds latency.
+
+        Legacy tvapp2:// scheme: channels scraped before this fix have URLs like
+          tvapp2://https://thetvapp.to/tv/acc-network-live-stream/
+        For those we do a one-time playlist fetch to migrate to a real CDN URL.
+        After the next scheduled rescrape they'll be updated in the DB automatically.
         """
-        m3u_text = self._fetch_playlist()
-        if not m3u_text:
-            logger.warning('[tvapp2] resolve: playlist fetch failed, using stored URL')
+        # Current format — already a real CDN URL, return as-is.
+        if not raw_url.startswith('tvapp2://'):
             return raw_url
 
-        # Build a map of {source_channel_id: stream_url} from a fresh playlist.
-        # We match by comparing the stored URL against fresh ones — channels whose
-        # CDN hostname or path prefix matches are considered the same stream.
+        # Legacy format — do a one-time fetch to get the real CDN URL.
+        logger.info('[tvapp2] resolve: migrating legacy tvapp2:// URL for %s', raw_url[9:60])
+        m3u_text = self._fetch_playlist()
+        if not m3u_text:
+            logger.warning('[tvapp2] resolve: playlist fetch failed for legacy URL')
+            return raw_url
+
         fresh_channels = self._parse_playlist(m3u_text)
-        fresh_map = {ch.source_channel_id: ch.stream_url for ch in fresh_channels}
+        slug_map = {ch.slug: ch.stream_url for ch in fresh_channels}
+        id_map   = {ch.source_channel_id: ch.stream_url for ch in fresh_channels}
 
-        # Find the stored channel_id by matching the stored URL against the
-        # stored stream_url values we scraped last time.  Since we can't look up
-        # channel_id from raw_url directly here, match by URL prefix (CDN base).
-        stored_base = _url_base(raw_url)
-        for ch in fresh_channels:
-            if _url_base(ch.stream_url) == stored_base:
-                logger.debug('[tvapp2] resolve: refreshed URL for %s', ch.source_channel_id)
-                return ch.stream_url
+        page_url = raw_url[len('tvapp2://'):]
+        slug = urlsplit(page_url).path.strip('/').split('/')[-1]
 
-        # If no prefix match, the CDN may have rotated entirely — just return
-        # the first fresh URL that has the same tvg-id embedded in the path,
-        # or fall back to the stored URL.
-        logger.warning('[tvapp2] resolve: no match for stored URL base %s, using stored URL', stored_base[:60])
+        if slug in slug_map:
+            logger.debug('[tvapp2] resolve: legacy slug %r → CDN URL', slug)
+            return slug_map[slug]
+        if slug in id_map:
+            logger.debug('[tvapp2] resolve: legacy id %r → CDN URL', slug)
+            return id_map[slug]
+
+        logger.warning('[tvapp2] resolve: no playlist match for legacy slug %r', slug)
         return raw_url
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _url_base(url: str) -> str:
-    """
-    Return scheme+host+path-without-filename for a URL, used to match a
-    stored CDN stream URL against a freshly fetched one even when the
-    token query string has rotated.
-
-    e.g. https://cdn.example.com/live/abc/index.m3u8?token=xyz
-      →  https://cdn.example.com/live/abc/
-    """
-    try:
-        p = urlsplit(url)
-        path = p.path.rsplit('/', 1)[0] + '/'
-        return f'{p.scheme}://{p.netloc}{path}'
-    except Exception:
-        return url
-
 
 _GROUP_MAP = {
     'sports':         'Sports',
