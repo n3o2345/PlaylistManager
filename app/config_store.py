@@ -14,7 +14,7 @@ from app.scrapers.base import merge_config_updates
 
 @contextmanager
 def _source_config_lock(source_id: int):
-    lock_path = Path('/tmp') / f'fastchannels-source-config-{source_id}.lock'
+    lock_path = Path('/tmp') / f'playlistmanager-source-config-{source_id}.lock'
     lock_path.touch(exist_ok=True)
     with lock_path.open('r+') as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)

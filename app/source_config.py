@@ -38,7 +38,7 @@ def build_setup_checklist(app_settings, sources_by_name: dict, scrapers_by_name:
     if not (app_settings.public_base_url or '').strip() and app_settings.env_public_base_url() is None:
         items.append({
             'key': 'public_base_url',
-            'label': 'Set FastChannels Server URL',
+            'label': 'Set PlaylistManager Server URL',
             'href': '/admin/settings#settings-card-public-base-url',
             'section': 'settings',
         })

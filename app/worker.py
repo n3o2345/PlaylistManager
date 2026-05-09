@@ -64,7 +64,7 @@ from app.config import VERSION as _VERSION
 # Keep the app object at module scope, but only log startup for the long-lived
 # `python -m app.worker` process so job imports don't look like worker restarts.
 if __name__ == '__main__':
-    logger.info('FastChannels worker v%s starting', _VERSION)
+    logger.info('PlaylistManager worker v%s starting', _VERSION)
 _NETWORK_OUTAGE_UNTIL = 0.0
 _NETWORK_OUTAGE_REASON = ''
 
@@ -472,10 +472,10 @@ def _network_error_summary(exc: Exception) -> str:
         text = str(err).strip()
         lowered = text.lower()
         if 'network is unreachable' in lowered:
-            return 'Network unavailable: no route to the internet. FastChannels will retry automatically.'
+            return 'Network unavailable: no route to the internet. PlaylistManager will retry automatically.'
         if 'temporary failure in name resolution' in lowered or 'failed to resolve' in lowered or 'err_name_not_resolved' in lowered:
-            return 'Network unavailable: DNS resolution failed. FastChannels will retry automatically.'
-    return 'Network unavailable: transient connectivity failure. FastChannels will retry automatically.'
+            return 'Network unavailable: DNS resolution failed. PlaylistManager will retry automatically.'
+    return 'Network unavailable: transient connectivity failure. PlaylistManager will retry automatically.'
 
 
 def _mark_network_outage(reason: str, cooldown_seconds: int = 90) -> None:
@@ -2025,7 +2025,7 @@ if __name__ == '__main__':
                 if not dvr_url:
                     return
                 feed_names = [
-                    f'FastChannels {f.name}'
+                    f'PlaylistManager {f.name}'
                     for f in _Feed.query.filter_by(is_enabled=True).all()
                 ]
             import time as _time

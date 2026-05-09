@@ -1,6 +1,6 @@
 # app/scrapers/vizio.py
 #
-# Vizio WatchFree+ scraper for FastChannels
+# Vizio WatchFree+ scraper for PlaylistManager
 #
 # API host: watchfreeplus-epg-prod.smartcasttv.com
 # Auth:     none — guide endpoint is publicly anonymous

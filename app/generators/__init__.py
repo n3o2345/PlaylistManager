@@ -106,7 +106,7 @@ def generate_xmltv_stream(filters: dict = None, base_url: str = None, feed_name:
     now_utc = datetime.now(tz=timezone.utc)
     yield '<?xml version="1.0" encoding="UTF-8"?>\n'
     yield (
-        f'<tv generator-info-name="FastChannels"'
+        f'<tv generator-info-name="PlaylistManager"'
         f' generator-info-url="{_esc_attr(base_url)}"'
         f' date="{now_utc.strftime("%Y%m%d%H%M%S %z")}">\n'
     )

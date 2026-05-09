@@ -1450,7 +1450,7 @@ class RokuScraper(BaseScraper):
             raise RuntimeError(f"[roku] playback request failed for {station_id}: {exc}") from exc
 
     # ── M3U extras ─────────────────────────────────────────────────────────────
-    # FastChannels calls generate_m3u() which uses ChannelData fields.
+    # PlaylistManager calls generate_m3u() which uses ChannelData fields.
     # We stuffed "playId|gracenoteId" into slug. Override the M3U line builder
     # to emit tvc-guide-stationid for channels that have a Gracenote ID.
     # BaseScraper's generate_m3u() calls channel_m3u_tags() if it exists.

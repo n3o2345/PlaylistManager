@@ -13,7 +13,7 @@ Safe to re-run.
 """
 import sqlite3
 
-DB_PATH = "/data/fastchannels.db"
+DB_PATH = "/data/playlistmanager.db"
 
 CHANNEL_SCHEME = "distro://channel/"
 

@@ -16,7 +16,7 @@ Safe to re-run.
 """
 import sqlite3
 
-DB_PATH = "/data/fastchannels.db"
+DB_PATH = "/data/playlistmanager.db"
 
 
 def _coalesce_channel(cur: sqlite3.Cursor, legacy_id: int, prefixed_id: int) -> None:

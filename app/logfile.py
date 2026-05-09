@@ -9,7 +9,7 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from .timezone_utils import current_zoneinfo
 
-LOG_PATH = os.environ.get('LOG_FILE', '/tmp/fastchannels.log')
+LOG_PATH = os.environ.get('LOG_FILE', '/tmp/playlistmanager.log')
 LOG_MAX_BYTES = int(os.environ.get('LOG_MAX_BYTES', str(5 * 1024 * 1024)))
 LOG_BACKUP_COUNT = int(os.environ.get('LOG_BACKUP_COUNT', '3'))
 

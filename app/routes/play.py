@@ -42,7 +42,7 @@ _MANIFEST_PROXY_SOURCES = {'pluto', 'localnow', 'tvapp2'}
 # During ad-break transitions Pluto's stitcher rotates these tokens, so any
 # absolute segment URL the client received from a previous variant refresh will
 # 403 once the token rolls.  We proxy segments for these hosts so the client
-# always fetches through FastChannels, which re-resolves a fresh manifest and
+# always fetches through PlaylistManager, which re-resolves a fresh manifest and
 # picks up the new signing credentials on every segment request.
 _PLUTO_SEGMENT_CDN_HOSTS = frozenset({
     'cfd-v4-service-channel-stitcher-use1-1.prd.pluto.tv',
@@ -260,7 +260,7 @@ def pluto_segment_proxy():
     stream to freeze until the player gives up or retries from scratch.
 
     By routing all Pluto segments through this proxy the player always fetches
-    from a stable FastChannels URL.  The actual upstream segment URL is encoded
+    from a stable PlaylistManager URL.  The actual upstream segment URL is encoded
     in the ?url= query parameter and may be updated by the variant proxy on
     each manifest refresh — so the client sees a consistent URL while the
     upstream CDN address stays current.
@@ -309,7 +309,7 @@ def stirr_manifest_proxy(channel_id: str):
     STIRR resolves to IP-bound URLs (ssai.aniview.com, weathernationtv.com, etc.)
     whose vx_token JWT is bound to the server's IP.  If the client follows a 302
     redirect directly it fails token validation because the client has a different IP.
-    Instead we proxy both the master and variant manifests through FastChannels (so
+    Instead we proxy both the master and variant manifests through PlaylistManager (so
     the CDN always sees the server IP), then rewrite variant URLs so the client hits
     this proxy again on each refresh.  Segments go straight to the CDN.
     """
@@ -510,7 +510,7 @@ def _rewrite_media_playlist(text: str, playlist_url: str,
     If seg_proxy_fn is provided it is called with the absolute segment URL
     and should return a proxied URL.  Used for sources (e.g. Pluto) whose
     CDN segment signing tokens rotate mid-stream — routing segments through
-    FastChannels prevents clients from 403-freezing when the token rolls.
+    PlaylistManager prevents clients from 403-freezing when the token rolls.
     """
     lines = []
     for line in text.splitlines():
@@ -527,12 +527,12 @@ def _rewrite_media_playlist(text: str, playlist_url: str,
 def _make_pluto_seg_proxy_fn(source_name: str):
     """
     Return a segment URL rewriter for Pluto that routes SSAI CDN segments
-    through the FastChannels /play/pluto/segment proxy.
+    through the PlaylistManager /play/pluto/segment proxy.
 
     Pluto's stitcher embeds signed CDN URLs whose tokens rotate at ad-break
     boundaries.  If the client holds a stale absolute CDN URL it receives a
     403 and the stream freezes for the duration of the commercial block.
-    Routing segments through FastChannels gives us a stable URL surface while
+    Routing segments through PlaylistManager gives us a stable URL surface while
     letting the variant proxy supply a fresh signed URL on each manifest poll.
 
     Non-Pluto CDN segments (subtitles, fallback manifests) are returned as
@@ -580,7 +580,7 @@ def tvapp2_segment_proxy():
 
 @play_bp.route('/play/tvapp2/<channel_id>/variant.m3u8')
 def tvapp2_variant_proxy(channel_id: str):
-    """Fetch a variant playlist from tvapp2 and rewrite segment URLs through FastChannels."""
+    """Fetch a variant playlist from tvapp2 and rewrite segment URLs through PlaylistManager."""
     raw_url = request.args.get('url', '')
     if not raw_url:
         abort(400)
@@ -627,11 +627,11 @@ def tvapp2_variant_proxy(channel_id: str):
 def tvapp2_manifest_proxy(channel_id: str):
     """
     Full proxy for tvapp2 channels. Chain:
-      client -> FastChannels /proxy.m3u8
+      client -> PlaylistManager /proxy.m3u8
              -> tvapp2 /channel?url=<raw_stream_url>  (master playlist)
-             -> FastChannels /variant.m3u8
+             -> PlaylistManager /variant.m3u8
              -> tvapp2 /channel?url=<variant_url>     (variant playlist)
-             -> FastChannels /segment
+             -> PlaylistManager /segment
              -> tvapp2 /channel?url=<seg_url>         (TS bytes)
              -> client
     Nothing hits the CDN directly from the client.
@@ -693,7 +693,7 @@ def hls_manifest_proxy(source_name: str, channel_id: str):
 
     Dispatcharr and other restreamers may only hit /play once, then keep refreshing
     the redirected upstream playlist until its session stops advancing.  For Pluto
-    and Local Now, keep playlist refreshes flowing through FastChannels so each
+    and Local Now, keep playlist refreshes flowing through PlaylistManager so each
     media-playlist refresh can re-resolve a fresh upstream URL.
     """
     if source_name not in _MANIFEST_PROXY_SOURCES:

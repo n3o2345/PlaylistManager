@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_REPOSITORY: fastchannelsv2
+  IMAGE_REPOSITORY: playlistmanager
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -65,7 +65,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha
           labels: |
-            org.opencontainers.image.title=FastChannelsv2
+            org.opencontainers.image.title=PlaylistManager
             org.opencontainers.image.description=FAST channel aggregator with M3U and XMLTV outputs
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 

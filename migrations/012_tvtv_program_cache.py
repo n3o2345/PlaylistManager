@@ -4,12 +4,12 @@ Migration 012: create tvtv_program_cache table.
 Rolling 3-day cache of tvtv.us guide data for FAST channel stations.
 Refreshed nightly by the background worker.
 
-Run with: docker exec fastchannelsv2 python /app/migrate.py
+Run with: docker exec playlistmanagerv2 python /app/migrate.py
 Safe to re-run.
 """
 import sqlite3
 
-DB_PATH = '/data/fastchannels.db'
+DB_PATH = '/data/playlistmanager.db'
 
 con = sqlite3.connect(DB_PATH)
 cur = con.cursor()

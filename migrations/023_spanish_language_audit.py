@@ -9,11 +9,11 @@ Two classes of fix:
    by scrapers that didn't recognise the name — set language='es' for those rows.
 
 Run:
-    docker exec fastchannelsv2 python /app/migrations/023_spanish_language_audit.py
+    docker exec playlistmanagerv2 python /app/migrations/023_spanish_language_audit.py
 """
 import sqlite3, sys, pathlib
 
-DB_PATH = pathlib.Path("/data/fastchannels.db")
+DB_PATH = pathlib.Path("/data/playlistmanager.db")
 if not DB_PATH.exists():
     print(f"DB not found at {DB_PATH}", file=sys.stderr)
     sys.exit(1)

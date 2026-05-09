@@ -17,7 +17,7 @@ import requests
 try:
     from .base import BaseScraper, ChannelData, ConfigField, ProgramData, StreamDeadError, ScrapeSkipError, infer_language_from_metadata
     from .category_utils import infer_category_from_name
-except ImportError:  # pragma: no cover - local staging outside FastChannels package
+except ImportError:  # pragma: no cover - local staging outside PlaylistManager package
     from app.scrapers.base import BaseScraper, ChannelData, ConfigField, ProgramData, StreamDeadError, ScrapeSkipError, infer_language_from_metadata
     from app.scrapers.category_utils import infer_category_from_name
 
@@ -33,7 +33,7 @@ def _join_categories(values: list[str] | tuple[str, ...] | None) -> str | None:
 
 class SlingScraper(BaseScraper):
     """
-    Best-effort FastChannels scraper for Sling Freestream.
+    Best-effort PlaylistManager scraper for Sling Freestream.
 
     Current status:
     - Channel inventory: working against Sling's player ribbon API.

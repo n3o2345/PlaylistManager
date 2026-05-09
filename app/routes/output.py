@@ -106,7 +106,7 @@ def m3u():
     if filters:
         content = generate_m3u(filters, base_url=base_url)
         return Response(content, mimetype='application/x-mpegurl',
-                        headers={'Content-Disposition': 'attachment; filename="fastchannels.m3u"'})
+                        headers={'Content-Disposition': 'attachment; filename="playlistmanager.m3u"'})
     path = get_artifact('master-m3u', ext='m3u')
     if path is None:
         return Response(
@@ -118,7 +118,7 @@ def m3u():
     return _send_feed_artifact(
         path,
         mimetype='application/x-mpegurl',
-        download_name='fastchannels.m3u',
+        download_name='playlistmanager.m3u',
     )
 
 
@@ -142,7 +142,7 @@ def m3u_gracenote():
     if filters:
         content = generate_gracenote_m3u(filters, base_url=base_url, namespace_start=gn_start)
         return Response(content, mimetype='application/x-mpegurl',
-                        headers={'Content-Disposition': 'attachment; filename="fastchannels-gracenote.m3u"'})
+                        headers={'Content-Disposition': 'attachment; filename="playlistmanager-gracenote.m3u"'})
     path = get_artifact('master-gracenote-m3u', ext='m3u')
     if path is None:
         return Response(
@@ -154,7 +154,7 @@ def m3u_gracenote():
     return _send_feed_artifact(
         path,
         mimetype='application/x-mpegurl',
-        download_name='fastchannels-gracenote.m3u',
+        download_name='playlistmanager-gracenote.m3u',
     )
 
 
@@ -166,7 +166,7 @@ def epg_xml():
         return Response(
             stream_with_context(generate_xmltv_stream(filters, base_url=base_url)),
             mimetype='application/xml',
-            headers={'Content-Disposition': 'attachment; filename="fastchannels.xml"'},
+            headers={'Content-Disposition': 'attachment; filename="playlistmanager.xml"'},
         )
 
     path, stale = get_xml_artifact('master')
@@ -181,7 +181,7 @@ def epg_xml():
     return _send_feed_artifact(
         path,
         mimetype='application/xml',
-        download_name='fastchannels.xml',
+        download_name='playlistmanager.xml',
     )
 
 

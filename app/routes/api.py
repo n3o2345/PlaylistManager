@@ -1044,7 +1044,7 @@ def inspect_channel(channel_id):
     else:
         resolved_url = ch.stream_url
         sess = _req.Session()
-        sess.headers['User-Agent'] = 'FastChannels-Inspector/1.0'
+        sess.headers['User-Agent'] = 'PlaylistManager-Inspector/1.0'
 
     if not resolved_url:
         return jsonify({'status': 'error', 'detail': 'No stream URL'})
@@ -2144,8 +2144,8 @@ def push_feed_to_dvr(feed_id):
             payload['xmltv_refresh'] = '3600'
         return _req.put(f"{dvr_url}/providers/m3u/sources/{safe}", json=payload, timeout=30)
 
-    gn_name  = f"FastChannels {feed.name} Gracenote"
-    epg_name = f"FastChannels {feed.name}"
+    gn_name  = f"PlaylistManager {feed.name} Gracenote"
+    epg_name = f"PlaylistManager {feed.name}"
     sources_added = []
 
     try:
@@ -2213,8 +2213,8 @@ def push_source_to_dvr(source_id):
         return _req.put(f"{dvr_url}/providers/m3u/sources/{safe}", json=payload, timeout=30)
 
     query_param = f"?source={source.name}"
-    std_name = f"FastChannels {source.display_name}"
-    gn_name = f"FastChannels {source.display_name} Gracenote"
+    std_name = f"PlaylistManager {source.display_name}"
+    gn_name = f"PlaylistManager {source.display_name} Gracenote"
     sources_added = []
 
     try:
@@ -2279,8 +2279,8 @@ def push_raw_output_to_dvr():
             payload['xmltv_refresh'] = '3600'
         return _req.put(f"{dvr_url}/providers/m3u/sources/{safe}", json=payload, timeout=8)
 
-    std_name = 'FastChannels Raw Output'
-    gn_name = 'FastChannels Raw Output Gracenote'
+    std_name = 'PlaylistManager Raw Output'
+    gn_name = 'PlaylistManager Raw Output Gracenote'
     sources_added = []
 
     try:
@@ -2361,7 +2361,7 @@ def gracenote_auto_clear():
 def backup_db():
     """Download a gzip-compressed copy of the live SQLite database."""
     import gzip, tempfile, os as _os, sqlite3 as _sqlite3
-    db_path = '/data/fastchannels.db'
+    db_path = '/data/playlistmanager.db'
     if not _os.path.exists(db_path):
         return jsonify({'error': 'Database file not found.'}), 404
     tmp_db  = tempfile.NamedTemporaryFile(suffix='.db',    delete=False)
@@ -2377,7 +2377,7 @@ def backup_db():
         with open(tmp_db.name, 'rb') as f_in, gzip.open(tmp_gz.name, 'wb', compresslevel=6) as f_out:
             f_out.write(f_in.read())
         ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-        filename = f'fastchannels_backup_{ts}.db.gz'
+        filename = f'playlistmanager_backup_{ts}.db.gz'
         return current_app.response_class(
             open(tmp_gz.name, 'rb').read(),
             mimetype='application/gzip',
@@ -2392,9 +2392,9 @@ def backup_db():
 def system_stats():
     # ── Database ──────────────────────────────────────────────────────────
     _DB_FILES = [
-        '/data/fastchannels.db',
-        '/data/fastchannels.db-shm',
-        '/data/fastchannels.db-wal',
+        '/data/playlistmanager.db',
+        '/data/playlistmanager.db-shm',
+        '/data/playlistmanager.db-wal',
     ]
     db_size = sum(_os.path.getsize(f) for f in _DB_FILES if _os.path.exists(f))
 

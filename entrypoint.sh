@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting FastChannels..."
+echo "🚀 Starting PlaylistManager..."
 
 # Start Redis
 redis-server --daemonize yes --logfile /var/log/redis.log --save "" --appendonly no
@@ -23,17 +23,17 @@ done
 
 # ── tvapp2 internal daemon ────────────────────────────────────────────────────
 # tvapp2 is bundled inside the image at /opt/tvapp2.  It runs as a background
-# Node.js process on localhost:4124 (TVAPP2_PORT).  FastChannels scrapers call
+# Node.js process on localhost:4124 (TVAPP2_PORT).  PlaylistManager scrapers call
 # it directly — no external network dependency or separate container needed.
 #
 # Set TVAPP2_ENABLED=0 in your environment to disable it (e.g. if you prefer
-# to run tvapp2 externally and configure the host in the FastChannels admin UI).
+# to run tvapp2 externally and configure the host in the PlaylistManager admin UI).
 if [ "${TVAPP2_ENABLED:-1}" = "1" ]; then
     echo "⏳ Starting embedded tvapp2..."
 
     # tvapp2 stores its working files (playlist.m3u8, xmltv.xml, urls.txt) in
     # the directory it's launched from.  Use /data/tvapp2 so they survive
-    # container restarts alongside the FastChannels database.
+    # container restarts alongside the PlaylistManager database.
     mkdir -p /data/tvapp2
 
     (
@@ -55,7 +55,7 @@ if [ "${TVAPP2_ENABLED:-1}" = "1" ]; then
     TVAPP2_PID=$!
 
     # Wait for tvapp2's health endpoint to respond before continuing.
-    # This ensures the playlist is ready before FastChannels first scrape runs.
+    # This ensures the playlist is ready before PlaylistManager first scrape runs.
     TVAPP2_URL="http://127.0.0.1:${TVAPP2_PORT:-4124}"
     echo "⏳ Waiting for tvapp2 at ${TVAPP2_URL}..."
     for i in $(seq 1 60); do

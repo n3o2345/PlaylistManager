@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Settings — FastChannels</title>
+  <title>Settings — PlaylistManager</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -386,7 +386,7 @@
 <body>
 
   <nav>
-    <h1><a href="/admin/" style="display:flex;align-items:center;text-decoration:none;"><img src="{{ url_for('static', filename='fastchannels_logo.svg') }}" alt="FastChannels" style="height:36px;width:auto;object-fit:contain;filter:none;"></a></h1>
+    <h1><a href="/admin/" style="display:flex;align-items:center;text-decoration:none;"><img src="{{ url_for('static', filename='playlistmanager_logo.svg') }}" alt="PlaylistManager" style="height:36px;width:auto;object-fit:contain;filter:none;"></a></h1>
     <a href="/admin/">Dashboard</a>
     <a href="/admin/sources">Sources</a>
     <a href="/admin/channels">Channels</a>
@@ -395,7 +395,7 @@
     <a href="/admin/logs">Logs</a>
     <a href="/admin/help">Help</a>
     {% include 'admin/_theme_toggle.html' %}
-    {% if update_status.update_available %}<span class="version" style="cursor:pointer" onclick="openUpdateModal()" title="Update available: v{{ update_status.latest_version }}">v{{ app_version }}<span class="update-pip"></span></span>{% else %}<a class="version" href="{{ update_status.latest_url or 'https://github.com/kineticman/FastChannelsv2' }}" target="_blank" rel="noopener noreferrer" title="View FastChannels on GitHub">v{{ app_version }}</a>{% endif %}
+    {% if update_status.update_available %}<span class="version" style="cursor:pointer" onclick="openUpdateModal()" title="Update available: v{{ update_status.latest_version }}">v{{ app_version }}<span class="update-pip"></span></span>{% else %}<a class="version" href="{{ update_status.latest_url or 'https://github.com/kineticman/PlaylistManagerv2' }}" target="_blank" rel="noopener noreferrer" title="View PlaylistManager on GitHub">v{{ app_version }}</a>{% endif %}
   </nav>
 
 <div class="page">
@@ -416,13 +416,13 @@
   </div>
   {% endif %}
 
-  <!-- FastChannels Server card -->
+  <!-- PlaylistManager Server card -->
   <div class="source-card" id="settings-card-public-base-url">
     <div class="source-header" style="cursor:default">
       <div class="source-title">
         <div class="source-icon">🌐</div>
         <div>
-          <div class="source-name">FastChannels Server URL</div>
+          <div class="source-name">PlaylistManager Server URL</div>
           <div class="source-meta">Set the address players and other devices should use to reach this server</div>
         </div>
       </div>
@@ -430,19 +430,19 @@
     <div class="source-body open">
       <div class="fields-grid" style="max-width:480px">
         <div class="field field-full">
-          <label for="public-base-url">FastChannels Server URL</label>
+          <label for="public-base-url">PlaylistManager Server URL</label>
           <input type="text" id="public-base-url"
                  placeholder="192.168.1.50 or 192.168.1.50:5523" value="{{ public_base_url }}">
-          <div class="help">Address other devices should use to reach this FastChannels server for generated M3U, XML, logo, poster, and playback URLs. You can enter just the IP or hostname and FastChannels will fill in <code>http://</code> and port <code>5523</code> automatically.</div>
+          <div class="help">Address other devices should use to reach this PlaylistManager server for generated M3U, XML, logo, poster, and playback URLs. You can enter just the IP or hostname and PlaylistManager will fill in <code>http://</code> and port <code>5523</code> automatically.</div>
           {% if public_base_url_from_env %}
           <div class="help">Currently coming from environment variable <code>FASTCHANNELS_SERVER_URL</code>. Saving here will override it in the database.</div>
           {% endif %}
           <div class="hint-box">
             Browser address: <code>{{ request_base_url }}</code><br>
             Detected server address: <code>{{ detected_base_url }}</code><br>
-            Recommended: enter the address clients should actually use to reach FastChannels, for example <code>http://192.168.1.50:5523</code>.<br>
+            Recommended: enter the address clients should actually use to reach PlaylistManager, for example <code>http://192.168.1.50:5523</code>.<br>
             If this field is set, generated feed URLs will use it exactly, even if you open the admin UI from a different host or port.<br>
-            If FastChannels is running in Docker and you opened the UI with <code>localhost</code>, auto-detect is usually not what other devices need, so set this field manually.
+            If PlaylistManager is running in Docker and you opened the UI with <code>localhost</code>, auto-detect is usually not what other devices need, so set this field manually.
           </div>
         </div>
       </div>
@@ -479,7 +479,7 @@
       <div class="toggle-row">
         <div class="toggle-row-text">
           <div class="toggle-row-label">Auto-refresh guide data hourly</div>
-          <div class="toggle-row-help">When enabled, FastChannels forces Channels DVR to re-import guide data for all registered FastChannels lineups once per hour. Only applies if you've added feeds via the "Add to Channels DVR" button.</div>
+          <div class="toggle-row-help">When enabled, PlaylistManager forces Channels DVR to re-import guide data for all registered PlaylistManager lineups once per hour. Only applies if you've added feeds via the "Add to Channels DVR" button.</div>
         </div>
         <div class="toggle-row-control">
           <label class="toggle-switch">
@@ -503,7 +503,7 @@
         <div class="source-icon">🕒</div>
         <div>
           <div class="source-name">Time Zone</div>
-          <div class="source-meta">Control how timestamps display across the admin UI and FastChannels logs</div>
+          <div class="source-meta">Control how timestamps display across the admin UI and PlaylistManager logs</div>
         </div>
       </div>
     </div>
@@ -517,7 +517,7 @@
                    value="{{ timezone_name }}">
             <div class="tz-dropdown" id="tz-dropdown" hidden></div>
           </div>
-          <div class="help">Type an IANA timezone like <code>America/New_York</code> or <code>Europe/London</code>. This controls admin timestamps and FastChannels app log timestamps.</div>
+          <div class="help">Type an IANA timezone like <code>America/New_York</code> or <code>Europe/London</code>. This controls admin timestamps and PlaylistManager app log timestamps.</div>
           {% if not timezone_name_from_db %}
           <div class="help">Currently using the system timezone because no explicit timezone has been saved yet.</div>
           {% endif %}
@@ -537,14 +537,14 @@
         <div class="source-icon">💾</div>
         <div>
           <div class="source-name">Database Backup</div>
-          <div class="source-meta">Download a snapshot of your FastChannels database</div>
+          <div class="source-meta">Download a snapshot of your PlaylistManager database</div>
         </div>
       </div>
     </div>
     <div class="source-body open">
       <div class="toggle-row-help" style="max-width:640px;margin-top:0.75rem;margin-bottom:0.75rem">
-        Downloads a gzip-compressed copy of <code style="color:var(--accent-soft);font-family:ui-monospace,monospace">fastchannels.db</code> — includes all channels, sources, feeds, settings, and Gracenote assignments.
-        Store it somewhere safe. To restore, decompress the file and replace <code style="color:var(--accent-soft);font-family:ui-monospace,monospace">/data/fastchannels.db</code> with it, then restart the container.
+        Downloads a gzip-compressed copy of <code style="color:var(--accent-soft);font-family:ui-monospace,monospace">playlistmanager.db</code> — includes all channels, sources, feeds, settings, and Gracenote assignments.
+        Store it somewhere safe. To restore, decompress the file and replace <code style="color:var(--accent-soft);font-family:ui-monospace,monospace">/data/playlistmanager.db</code> with it, then restart the container.
       </div>
       <a class="btn btn-audit" href="/api/settings/backup-db" download>Download DB Backup</a>
     </div>
@@ -562,8 +562,8 @@
       </div>
     </div>
     <div class="source-body open">
-      <div style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--text-muted);">Use this URL when adding FastChannels as an app icon in TrueNAS SCALE or any other platform that asks for an icon URL.</div>
-      {% set _logo_url = url_for('static', filename='fastchannels_logo.png', _external=True) %}
+      <div style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--text-muted);">Use this URL when adding PlaylistManager as an app icon in TrueNAS SCALE or any other platform that asks for an icon URL.</div>
+      {% set _logo_url = url_for('static', filename='playlistmanager_logo.png', _external=True) %}
       <div class="url-chip" onclick="copyLogoUrl(event, this)" style="cursor:pointer;display:flex;align-items:center;gap:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.55rem 0.9rem;font-family:monospace;font-size:0.78rem;color:var(--accent);overflow:hidden;">
         <span class="url-chip-text" id="logo-url-text" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ _logo_url }}</span>
         <a href="{{ _logo_url }}" target="_blank" onclick="event.stopPropagation()" style="color:var(--text-muted);font-size:0.75rem;flex-shrink:0" title="Open in new tab">↗</a>
@@ -589,7 +589,7 @@
         <div class="source-icon">🖼️</div>
         <div>
           <div class="source-name">Image Proxy &amp; Caching</div>
-          <div class="source-meta">Control whether logos and program artwork are served through FastChannels</div>
+          <div class="source-meta">Control whether logos and program artwork are served through PlaylistManager</div>
         </div>
       </div>
     </div>
@@ -597,7 +597,7 @@
       <div class="toggle-row">
         <div class="toggle-row-text">
           <div class="toggle-row-label">Enable image proxy &amp; caching</div>
-          <div class="toggle-row-help">When enabled, channel logos and program artwork are cached and served through FastChannels — ensuring consistent delivery regardless of upstream CDN availability. When disabled, all image URLs point directly to the upstream provider. Note: some sources (e.g. Roku) require proxying for program artwork to display correctly; disabling this may cause missing artwork for those channels.</div>
+          <div class="toggle-row-help">When enabled, channel logos and program artwork are cached and served through PlaylistManager — ensuring consistent delivery regardless of upstream CDN availability. When disabled, all image URLs point directly to the upstream provider. Note: some sources (e.g. Roku) require proxying for program artwork to display correctly; disabling this may cause missing artwork for those channels.</div>
         </div>
         <div class="toggle-row-control">
           <label class="toggle-switch">
@@ -641,7 +641,7 @@
       <div class="toggle-row" id="gn-remote-row">
         <div class="toggle-row-text">
           <div class="toggle-row-label">Community Map URL</div>
-          <div class="toggle-row-help">Remote CSV fetched on startup and refreshed daily. Leave blank to use the default FastChannels community Gist.</div>
+          <div class="toggle-row-help">Remote CSV fetched on startup and refreshed daily. Leave blank to use the default PlaylistManager community Gist.</div>
           <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
             <input type="url" id="gn-map-url" style="flex:1;min-width:260px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82rem;padding:0.35rem 0.6rem" placeholder="Default Gist URL">
             <button class="btn btn-secondary" onclick="saveGracenoteMapUrl()">Save URL</button>
@@ -656,7 +656,7 @@
       <div class="toggle-row" id="gn-contribution-row">
         <div class="toggle-row-text">
           <div class="toggle-row-label">Contribution Webhook URL</div>
-          <div class="toggle-row-help">Where user contributions are sent when they click Contribute in the Community Map. Defaults to the FastChannels community webhook — leave blank to use the default.</div>
+          <div class="toggle-row-help">Where user contributions are sent when they click Contribute in the Community Map. Defaults to the PlaylistManager community webhook — leave blank to use the default.</div>
           <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
             <input type="url" id="gn-contribution-url" style="flex:1;min-width:260px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82rem;padding:0.35rem 0.6rem" placeholder="Default Make.com webhook (leave blank to use default)" value="{{ gracenote_contribution_url }}">
             <button class="btn btn-secondary" onclick="saveContributionUrl()">Save URL</button>

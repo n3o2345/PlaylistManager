@@ -1,6 +1,48 @@
-# FastChannelsv2
+# PlaylistManager
 
-FAST channel aggregator — scrapes Pluto TV, Tubi, Roku, Samsung TV Plus, Sling Freestream, Plex, DistroTV, Xumo, and more, then outputs M3U playlists and XMLTV EPG guides for use in any IPTV player (Jellyfin, Plex, Channels DVR, TiviMate, etc.).
+> **Based on [FastChannels](https://github.com/kineticman/FastChannelsv2) by kineticman and contributors.**
+> PlaylistManager is a fork that adds HDHomeRun OTA tuner support, renames
+> the project, and ships several stream-stability fixes — most notably the
+> Pluto TV CDN freeze at commercial breaks.  All credit for the original
+> architecture, scrapers, EPG pipeline, and admin UI goes to the FastChannels
+> developer(s).
+
+FAST channel aggregator — scrapes Pluto TV, Tubi, Roku, Samsung TV Plus,
+Sling Freestream, Plex, DistroTV, Xumo, **HDHomeRun OTA tuners**, and more,
+then outputs M3U playlists and XMLTV EPG guides for use in any IPTV player
+(Jellyfin, Plex, Channels DVR, TiviMate, etc.).
+
+## What's new in PlaylistManager
+
+| Change | Detail |
+|--------|--------|
+| **HDHomeRun support** | Auto-discovers tuners on your LAN (or use static IPs). Skips DRM channels. Configurable quality preset (HTS, 720p, 480p, raw MPEG-TS). |
+| **Pluto CDN freeze fix** | Multi-layered fix for the black-screen/freeze that occurs at commercial-break boundaries. See [Pluto freeze fix](#pluto-freeze-fix) below. |
+| **Disc-sequence tracking** | Proxy now tracks `EXT-X-DISCONTINUITY-SEQUENCE` in addition to raw `#EXT-X-DISCONTINUITY` tags, catching more rotation events. |
+| **Shorter Pluto TTL** | Pluto variant playlist cache TTL reduced from 20 s to 6 s (one HLS target-duration). This alone eliminates most freezes. |
+| **Smarter 403 retry** | Segment 403/410 errors now trigger up to 3 retry attempts with progressive back-off (0.3 / 0.6 / 0.9 s), each with a full cache eviction. |
+| **Renamed** | All internal references and Docker image names updated to `playlistmanager`. |
+
+## Pluto freeze fix
+
+Pluto TV uses Server-Side Ad Insertion (SSAI).  At every commercial-break
+boundary its CDN stitcher rotates the signed URLs embedded in the HLS
+variant playlist.  A proxy that caches the old playlist will hand clients
+expired segment URLs, which the CDN rejects (403/410) — causing a freeze or
+black screen.
+
+PlaylistManager's HLS proxy addresses this with four layers:
+
+1. **Short cache TTL** — Pluto variant playlists expire after 6 s (configurable
+   via `HLS_PLUTO_VARIANT_TTL`), matching the stream's target duration.
+2. **`#EXT-X-DISCONTINUITY` counter** — every fresh playlist fetch compares the
+   discontinuity tag count; a rising count evicts the cache immediately.
+3. **`EXT-X-DISCONTINUITY-SEQUENCE` tracker** — independently tracks the
+   stitcher's sequence number; any advance also forces eviction.
+4. **403/410 retry loop** — if a segment still returns an error, the proxy
+   evicts all state and retries up to 3 times with exponential back-off.
+
+
 
 ## Deploy with Portainer
 
@@ -8,9 +50,9 @@ In Portainer, create a new stack and paste this:
 
 ```yaml
 services:
-  fastchannelsv2:
-    image: ghcr.io/kineticman/fastchannelsv2:latest
-    container_name: fastchannelsv2
+  playlistmanagerv2:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/playlistmanager:latest
+    container_name: playlistmanagerv2
     restart: unless-stopped
     ports:
       - "5523:5523"
@@ -31,11 +73,11 @@ volumes:
 
 ```bash
 docker run -d \
-  --name fastchannelsv2 \
+  --name playlistmanagerv2 \
   --restart unless-stopped \
   -p 5523:5523 \
-  -v fastchannelsv2_data:/data \
-  ghcr.io/kineticman/fastchannelsv2:latest
+  -v playlistmanagerv2_data:/data \
+  ghcr.io/YOUR_GITHUB_USERNAME/playlistmanager:latest
 ```
 
 Then open `http://localhost:5523/admin/`.
@@ -55,7 +97,7 @@ On first boot all enabled sources scrape automatically. Give it a few minutes �
 
 **2. Configure Settings.**
 Go to **Admin → Settings** and set two things:
-- **FastChannels Server URL** — the LAN address other devices use to reach this server (e.g. `http://192.168.1.50:5523`). Stream URLs in your M3U will use this address.
+- **PlaylistManager Server URL** — the LAN address other devices use to reach this server (e.g. `http://192.168.1.50:5523`). Stream URLs in your M3U will use this address.
 - **Channels DVR Server URL** — if you use Channels DVR, set this now so the one-click "Add to Channels DVR" button on the Feeds page works.
 
 **3. Configure Sources.**
@@ -106,7 +148,7 @@ The Channels page is where you fine-tune your lineup after scraping.
 
 ## Feeds
 
-Feeds are the primary way to get output out of FastChannels. Each feed is a named, filtered slice of your channels with its own stable M3U and EPG URLs.
+Feeds are the primary way to get output out of PlaylistManager. Each feed is a named, filtered slice of your channels with its own stable M3U and EPG URLs.
 
 A built-in **Default** feed is created automatically and includes all enabled channels. Create additional feeds to build filtered outputs for specific players or purposes — by source, category, language, or a manually picked channel list.
 
@@ -150,11 +192,11 @@ A few global defaults can optionally be set with environment variables (not requ
 
 ```yaml
 environment:
-  PUBLIC_BASE_URL: "http://192.168.1.50:5523"         # LAN address other devices use to reach FastChannels
+  PUBLIC_BASE_URL: "http://192.168.1.50:5523"         # LAN address other devices use to reach PlaylistManager
   CHANNELS_DVR_SERVER_URL: "http://192.168.1.60:8089" # Channels DVR server
 ```
 
-Values saved in **Settings** override environment variables. If a DB value is cleared, FastChannels falls back to the environment variable.
+Values saved in **Settings** override environment variables. If a DB value is cleared, PlaylistManager falls back to the environment variable.
 
 ## Architecture
 

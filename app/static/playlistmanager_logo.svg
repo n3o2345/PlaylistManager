@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160">
+  <!-- Stylized "F" with signal/broadcast motif -->
+  <!-- Background circle - transparent -->
+  
+  <!-- Signal arcs radiating from left -->
+  <path d="M 30 80 Q 30 45 60 30" fill="none" stroke="#7dd3fc" stroke-width="7" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 30 80 Q 30 20 80 8"  fill="none" stroke="#7dd3fc" stroke-width="7" stroke-linecap="round" opacity="0.3"/>
+
+  <!-- Lightning bolt - fast -->
+  <polygon points="95,8 48,85 80,85 65,152 115,75 83,75" 
+           fill="url(#lg1)"/>
+  
+  <!-- Channel bars on the left -->
+  <rect x="8"  y="115" width="14" height="38" rx="3" fill="#38bdf8" opacity="0.8"/>
+  <rect x="26" y="98"  width="14" height="55" rx="3" fill="#38bdf8" opacity="0.7"/>
+  <rect x="44" y="80"  width="14" height="73" rx="3" fill="#38bdf8" opacity="0.6"/>
+
+  <defs>
+    <linearGradient id="lg1" x1="0%" y1="0%" x2="60%" y2="100%">
+      <stop offset="0%"   stop-color="#bae6fd"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+  </defs>
+</svg>

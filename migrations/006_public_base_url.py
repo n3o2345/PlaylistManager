@@ -2,11 +2,11 @@
 Migration 006 — add public_base_url to app_settings.
 
 Run with:
-    docker exec fastchannelsv2 python /app/migrations/006_public_base_url.py
+    docker exec playlistmanagerv2 python /app/migrations/006_public_base_url.py
 """
 import sqlite3
 
-DB_PATH = "/data/fastchannels.db"
+DB_PATH = "/data/playlistmanager.db"
 
 conn = sqlite3.connect(DB_PATH)
 cur = conn.cursor()

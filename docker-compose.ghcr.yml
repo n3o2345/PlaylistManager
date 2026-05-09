@@ -1,9 +1,9 @@
 version: '3.9'
 
 services:
-  fastchannelsv2:
-    image: ghcr.io/${GHCR_OWNER:-kineticman}/fastchannelsv2:${FASTCHANNELSV2_IMAGE_TAG:-latest}
-    container_name: fastchannelsv2
+  playlistmanager:
+    image: ghcr.io/${GHCR_OWNER:-kineticman}/playlistmanager:${PLAYLISTMANAGER_IMAGE_TAG:-latest}
+    container_name: playlistmanager
     restart: unless-stopped
     ports:
       - "5523:5523"

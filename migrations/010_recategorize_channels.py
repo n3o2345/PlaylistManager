@@ -15,11 +15,11 @@ Fixes channels that landed in the wrong bucket after 009's normalization:
  - Misc obvious name-based corrections
 
 Run:
-    docker exec fastchannelsv2 python /app/migrations/010_recategorize_channels.py
+    docker exec playlistmanagerv2 python /app/migrations/010_recategorize_channels.py
 """
 import sqlite3, sys, pathlib
 
-DB_PATH = pathlib.Path("/data/fastchannels.db")
+DB_PATH = pathlib.Path("/data/playlistmanager.db")
 if not DB_PATH.exists():
     print(f"DB not found at {DB_PATH}", file=sys.stderr)
     sys.exit(1)

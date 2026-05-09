@@ -9,7 +9,7 @@ Safe to re-run (DELETE WHERE NOT IN is idempotent).
 """
 import sqlite3
 
-DB_PATH = "/data/fastchannels.db"
+DB_PATH = "/data/playlistmanager.db"
 
 con = sqlite3.connect(DB_PATH)
 cur = con.cursor()

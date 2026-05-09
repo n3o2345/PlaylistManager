@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class XumoScraper(BaseScraper):
     """
-    Xumo Play scraper for FastChannels.
+    Xumo Play scraper for PlaylistManager.
 
     Design notes:
     - fetch_channels() stores an opaque raw URL: xumo://channel/<channel_id>
@@ -87,7 +87,7 @@ class XumoScraper(BaseScraper):
         self._asset_cache: dict[str, dict[str, Any]] = {}
 
     # ---------------------------------------------------------------------
-    # Required FastChannels methods
+    # Required PlaylistManager methods
     # ---------------------------------------------------------------------
     def fetch_channels(self) -> list[ChannelData]:
         url = self.BASE_URL + self.CHANNEL_LIST_FIELDS.format(
@@ -407,7 +407,7 @@ class XumoScraper(BaseScraper):
             "[timestamp]": str(int(datetime.now(timezone.utc).timestamp() * 1000)),
             "[app_bundle]": "play.xumo.com",
             "[device_make]": "OpenAI",
-            "[device_model]": "FastChannels",
+            "[device_model]": "PlaylistManager",
             "[content_language]": "en",
             "[IS_LAT]": "0",
             "[IFA]": self._ifa_id,

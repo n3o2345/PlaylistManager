@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 
-DB_PATH = pathlib.Path("/data/fastchannels.db")
+DB_PATH = pathlib.Path("/data/playlistmanager.db")
 MIGRATIONS_DIR = pathlib.Path("/app/migrations")
 
 

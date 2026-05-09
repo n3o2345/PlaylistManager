@@ -1,5 +1,5 @@
 """
-Pluto TV scraper for FastChannels.
+Pluto TV scraper for PlaylistManager.
 Config (set via admin UI):
   - username / password  (optional — anonymous works fine)
   - country_codes        (comma-separated, default: us_east)

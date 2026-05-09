@@ -8,7 +8,7 @@ the current models on first boot via `db.create_all()`.
 ## Running a migration on an existing install
 
 ```bash
-docker exec fastchannelsv2 python /app/migrations/<script>.py
+docker exec playlistmanagerv2 python /app/migrations/<script>.py
 ```
 
 Each script is safe to re-run — it checks before altering anything.

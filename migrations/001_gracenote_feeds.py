@@ -1,12 +1,12 @@
 """
 One-time migration: add gracenote_id to channels, fix feeds table schema.
-Run with: docker exec fastchannelsv2 python /app/migrate.py
+Run with: docker exec playlistmanagerv2 python /app/migrate.py
 Safe to re-run — checks before altering anything.
 """
 import sqlite3
 import sys
 
-DB_PATH = '/data/fastchannels.db'
+DB_PATH = '/data/playlistmanager.db'
 
 con = sqlite3.connect(DB_PATH)
 cur = con.cursor()

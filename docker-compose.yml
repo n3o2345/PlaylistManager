@@ -1,7 +1,7 @@
 services:
-  fastchannelsv2:
-    container_name: fastchannelsv2
-    image: ghcr.io/n3o2345/fastchannelsv2:latest
+  playlistmanager:
+    container_name: playlistmanager
+    image: ghcr.io/n3o2345/playlistmanager:latest
     restart: unless-stopped
     ports:
       - '5523:5523'

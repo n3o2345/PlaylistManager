@@ -45,7 +45,7 @@ RUN git clone --depth=1 https://github.com/TheBinaryNinja/tvapp2.git /opt/tvapp2
     && npm install --omit=dev \
     && mkdir -p /data/tvapp2
 
-# ── FastChannels app ──────────────────────────────────────────────────────────
+# ── PlaylistManager app ──────────────────────────────────────────────────────────
 COPY . .
 
 RUN chmod +x /app/entrypoint.sh

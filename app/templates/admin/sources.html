@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sources — FastChannels</title>
+  <title>Sources — PlaylistManager</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -374,7 +374,7 @@
 </head>
 <body>
   <nav>
-    <h1><a href="/admin/" style="display:flex;align-items:center;text-decoration:none;"><img src="{{ url_for('static', filename='fastchannels_logo.svg') }}" alt="FastChannels" style="height:36px;width:auto;object-fit:contain;"></a></h1>
+    <h1><a href="/admin/" style="display:flex;align-items:center;text-decoration:none;"><img src="{{ url_for('static', filename='playlistmanager_logo.svg') }}" alt="PlaylistManager" style="height:36px;width:auto;object-fit:contain;"></a></h1>
     <a href="/admin/">Dashboard</a>
     <a href="/admin/sources" class="active">Sources</a>
     <a href="/admin/channels">Channels</a>
@@ -383,7 +383,7 @@
     <a href="/admin/logs">Logs</a>
     <a href="/admin/help">Help</a>
     {% include 'admin/_theme_toggle.html' %}
-    {% if update_status.update_available %}<span class="version" style="cursor:pointer" onclick="openUpdateModal()" title="Update available: v{{ update_status.latest_version }}">v{{ app_version }}<span class="update-pip"></span></span>{% else %}<a class="version" href="{{ update_status.latest_url or 'https://github.com/kineticman/FastChannelsv2' }}" target="_blank" rel="noopener noreferrer" title="View FastChannels on GitHub">v{{ app_version }}</a>{% endif %}
+    {% if update_status.update_available %}<span class="version" style="cursor:pointer" onclick="openUpdateModal()" title="Update available: v{{ update_status.latest_version }}">v{{ app_version }}<span class="update-pip"></span></span>{% else %}<a class="version" href="{{ update_status.latest_url or 'https://github.com/kineticman/PlaylistManagerv2' }}" target="_blank" rel="noopener noreferrer" title="View PlaylistManager on GitHub">v{{ app_version }}</a>{% endif %}
   </nav>
 
   <div class="container">

@@ -4,11 +4,11 @@ Migration 004 — create app_settings table for global configuration.
 Adds a single-row table to store app-wide settings like global_chnum_start.
 
 Run:
-    docker exec fastchannelsv2 python /app/migrations/004_app_settings.py
+    docker exec playlistmanagerv2 python /app/migrations/004_app_settings.py
 """
 import sqlite3, sys, pathlib
 
-DB_PATH = pathlib.Path("/data/fastchannels.db")
+DB_PATH = pathlib.Path("/data/playlistmanager.db")
 if not DB_PATH.exists():
     print(f"DB not found at {DB_PATH}", file=sys.stderr)
     sys.exit(1)

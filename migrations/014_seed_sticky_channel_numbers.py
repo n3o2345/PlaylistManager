@@ -9,7 +9,7 @@ Safe to re-run.
 """
 import sqlite3
 
-DB_PATH = '/data/fastchannels.db'
+DB_PATH = '/data/playlistmanager.db'
 
 
 def _sort_key(row):

@@ -1,6 +1,6 @@
 # app/scrapers/tubi.py
 """
-Tubi TV scraper for FastChannels.
+Tubi TV scraper for PlaylistManager.
 
 Two auth modes:
   - Anonymous (default): GETs tubitv.com/live, extracts the embedded

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class LGChannelsScraper(BaseScraper):
     """
-    FastChannels scraper for LG Channels.
+    PlaylistManager scraper for LG Channels.
 
     Notes:
     - Uses the public LG Channels web API discovered from the HAR/probe.

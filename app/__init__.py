@@ -46,7 +46,7 @@ def create_app(config_class=Config):
             'update_status': get_version_status(
                 VERSION,
                 enabled=app.config.get('VERSION_CHECK_ENABLED', True),
-                repo=app.config.get('VERSION_CHECK_REPO', 'kineticman/FastChannelsv2'),
+                repo=app.config.get('VERSION_CHECK_REPO', 'kineticman/PlaylistManagerv2'),
                 ttl_hours=app.config.get('VERSION_CHECK_TTL_HOURS', 12),
             ),
         }

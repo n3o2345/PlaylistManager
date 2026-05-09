@@ -78,7 +78,7 @@ def _parse_localnow_title(
 
 class LocalNowScraper(BaseScraper):
     """
-    FastChannels scraper for Local Now.
+    PlaylistManager scraper for Local Now.
 
     Design notes:
     - No network calls in __init__

@@ -12,7 +12,7 @@ each), taking ~2-4 minutes including pacing delays.  Uses curl_cffi for
 Cloudflare bypass with a fresh session per lineup-day pair.
 
 Standalone dry run (prints stats, writes nothing):
-    docker exec fastchannelsv2 python -m app.tvtv_cache --dry-run
+    docker exec playlistmanagerv2 python -m app.tvtv_cache --dry-run
 """
 
 from __future__ import annotations

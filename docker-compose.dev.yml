@@ -2,6 +2,6 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 services:
-  fastchannelsv2:
+  playlistmanager:
     volumes:
       - ./app:/app/app

@@ -5,11 +5,11 @@ Marks a channel as a manual duplicate without disabling it.
 Used by the admin UI to label channels for filtering purposes only.
 
 Run:
-    docker exec fastchannelsv2 python /app/migrations/008_is_duplicate.py
+    docker exec playlistmanagerv2 python /app/migrations/008_is_duplicate.py
 """
 import sqlite3, sys, pathlib
 
-DB_PATH = pathlib.Path("/data/fastchannels.db")
+DB_PATH = pathlib.Path("/data/playlistmanager.db")
 if not DB_PATH.exists():
     print(f"DB not found at {DB_PATH}", file=sys.stderr)
     sys.exit(1)

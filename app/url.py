@@ -121,7 +121,7 @@ def public_base_url() -> str:
     settings_value = (AppSettings.get().effective_public_base_url() or "").strip().rstrip("/")
     if settings_value:
         # User explicitly set a URL — honour it as-is. If they've configured
-        # http:// deliberately (e.g. Channels DVR accesses FastChannels directly
+        # http:// deliberately (e.g. Channels DVR accesses PlaylistManager directly
         # over HTTP while the admin UI is behind an HTTPS reverse proxy) we must
         # not silently upgrade the scheme or feed/play URLs will break.
         return settings_value

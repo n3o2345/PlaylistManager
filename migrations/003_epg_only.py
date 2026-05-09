@@ -5,11 +5,11 @@ EPG-only sources are excluded from M3U output but their program data
 is used to enrich EPG for channels matched by name in other sources.
 
 Run:
-    docker exec fastchannelsv2 python /app/migrations/003_epg_only.py
+    docker exec playlistmanagerv2 python /app/migrations/003_epg_only.py
 """
 import sqlite3, sys, pathlib
 
-DB_PATH = pathlib.Path("/data/fastchannels.db")
+DB_PATH = pathlib.Path("/data/playlistmanager.db")
 if not DB_PATH.exists():
     print(f"DB not found at {DB_PATH}", file=sys.stderr)
     sys.exit(1)

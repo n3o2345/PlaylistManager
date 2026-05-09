@@ -1,5 +1,5 @@
 """
-TCL TV+ scraper for FastChannels.
+TCL TV+ scraper for PlaylistManager.
 """
 from __future__ import annotations
 

@@ -2,12 +2,12 @@
 Migration 007 — rename Amazon Prime Free source id to snake_case.
 
 Run with:
-    docker exec fastchannelsv2 python /app/migrations/007_amazon_source_name_snake_case.py
+    docker exec playlistmanagerv2 python /app/migrations/007_amazon_source_name_snake_case.py
 """
 import json
 import sqlite3
 
-DB_PATH = "/data/fastchannels.db"
+DB_PATH = "/data/playlistmanager.db"
 OLD = "amazon-prime-free"
 NEW = "amazon_prime_free"
 

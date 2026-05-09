@@ -13,11 +13,11 @@ Fixes channels that landed in the wrong bucket or were left as NULL:
  - Zona TUDN: Latino → Sports (sports channel, not language bucket)
 
 Run:
-    docker exec fastchannelsv2 python /app/migrations/022_recategorize_channels_2.py
+    docker exec playlistmanagerv2 python /app/migrations/022_recategorize_channels_2.py
 """
 import sqlite3, sys, pathlib
 
-DB_PATH = pathlib.Path("/data/fastchannels.db")
+DB_PATH = pathlib.Path("/data/playlistmanager.db")
 if not DB_PATH.exists():
     print(f"DB not found at {DB_PATH}", file=sys.stderr)
     sys.exit(1)

@@ -678,7 +678,7 @@ def settings():
     if not (app_settings.public_base_url or '').strip() and app_settings.env_public_base_url() is None:
         settings_needs_config.append({
             'key': 'public_base_url',
-            'label': 'FastChannels Server URL',
+            'label': 'PlaylistManager Server URL',
             'anchor': 'settings-card-public-base-url',
         })
     if not (app_settings.channels_dvr_url or '').strip() and app_settings.env_channels_dvr_url() is None:

@@ -3,12 +3,12 @@ Migration 013: add index on programs.end_time.
 
 Speeds up hourly EPG prune jobs so they do not scan the entire programs table.
 
-Run with: docker exec fastchannelsv2 python /app/migrations/013_program_end_time_index.py
+Run with: docker exec playlistmanagerv2 python /app/migrations/013_program_end_time_index.py
 Safe to re-run.
 """
 import sqlite3
 
-DB_PATH = '/data/fastchannels.db'
+DB_PATH = '/data/playlistmanager.db'
 INDEX_NAME = 'idx_programs_end_time'
 
 con = sqlite3.connect(DB_PATH)

@@ -1,6 +1,6 @@
 # app/scrapers/samsung.py
 #
-# Samsung TV Plus scraper for FastChannels
+# Samsung TV Plus scraper for PlaylistManager
 #
 # Channel metadata and EPG are sourced from Matt Huisman's public mirror:
 #   https://github.com/matthuisman/samsung-tvplus-for-channels

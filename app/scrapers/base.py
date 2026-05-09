@@ -278,7 +278,7 @@ class BaseScraper(ABC):
         self.session = requests.Session()
         self._configure_session(self.session)
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (compatible; FastChannels/1.0)'
+            'User-Agent': 'Mozilla/5.0 (compatible; PlaylistManager/1.0)'
         })
 
     def _retry_config(self) -> Retry:

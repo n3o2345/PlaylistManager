@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Channel Changes Report — FastChannels</title>
+  <title>Channel Changes Report — PlaylistManager</title>
   <style>
     html { font-size: 17px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -201,7 +201,7 @@
 </head>
 <body>
   <nav>
-    <h1><a href="/admin/" style="display:flex;align-items:center;text-decoration:none;"><img src="{{ url_for('static', filename='fastchannels_logo.svg') }}" alt="FastChannels" style="height:36px;width:auto;object-fit:contain;"></a></h1>
+    <h1><a href="/admin/" style="display:flex;align-items:center;text-decoration:none;"><img src="{{ url_for('static', filename='playlistmanager_logo.svg') }}" alt="PlaylistManager" style="height:36px;width:auto;object-fit:contain;"></a></h1>
     <a href="/admin/">Dashboard</a>
     <a href="/admin/sources">Sources</a>
     <a href="/admin/channels">Channels</a>
@@ -210,7 +210,7 @@
     <a href="/admin/logs">Logs</a>
     <a href="/admin/help">Help</a>
     {% include 'admin/_theme_toggle.html' %}
-    {% if update_status.update_available %}<span class="version" style="cursor:pointer" onclick="openUpdateModal()" title="Update available: v{{ update_status.latest_version }}">v{{ app_version }}<span class="update-pip"></span></span>{% else %}<a class="version" href="{{ update_status.latest_url or 'https://github.com/kineticman/FastChannelsv2' }}" target="_blank" rel="noopener noreferrer" title="View FastChannels on GitHub">v{{ app_version }}</a>{% endif %}
+    {% if update_status.update_available %}<span class="version" style="cursor:pointer" onclick="openUpdateModal()" title="Update available: v{{ update_status.latest_version }}">v{{ app_version }}<span class="update-pip"></span></span>{% else %}<a class="version" href="{{ update_status.latest_url or 'https://github.com/kineticman/PlaylistManagerv2' }}" target="_blank" rel="noopener noreferrer" title="View PlaylistManager on GitHub">v{{ app_version }}</a>{% endif %}
   </nav>
 
   <div class="page">
@@ -227,7 +227,7 @@
     </div>
 
     <div class="banner">
-      <p><strong>Note:</strong> this report is in beta. Inactive channel timing is approximate — it reflects when FastChannels detected the change, not necessarily when the channel disappeared. Accuracy improves over time as more scrape history is collected.</p>
+      <p><strong>Note:</strong> this report is in beta. Inactive channel timing is approximate — it reflects when PlaylistManager detected the change, not necessarily when the channel disappeared. Accuracy improves over time as more scrape history is collected.</p>
     </div>
 
     <div class="toolbar">
@@ -440,7 +440,7 @@
     {% endif %}
 
     <p class="footer-note">
-      ⚠️ This report is in beta — data shown is based on what FastChannels currently tracks during scrapes. Have feedback? Let us know on the forum.
+      ⚠️ This report is in beta — data shown is based on what PlaylistManager currently tracks during scrapes. Have feedback? Let us know on the forum.
     </p>
   </div>
 <script src="{{ url_for('static', filename='js/admin_theme.js') }}"></script>

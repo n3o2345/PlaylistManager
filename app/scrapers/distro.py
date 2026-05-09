@@ -1,5 +1,5 @@
 """
-DistroTV scraper for FastChannels.
+DistroTV scraper for PlaylistManager.
 No config fields required — anonymous public API.
 """
 from __future__ import annotations

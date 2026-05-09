@@ -1,41 +1,74 @@
 """
 hls_proxy_blueprint.py
 ======================
-Drop this file into your FastChannels app/ directory.
-
-It adds an HLS buffering proxy directly into Flask as a blueprint —
-same process, no second container. FastChannels can rewrite its output
-stream URLs to go through this proxy instead of pointing clients at
-upstream CDN URLs directly.
+HLS buffering proxy for PlaylistManager — runs as a Flask blueprint in the
+same process, no second container required.
 
 Features
 --------
 * Variant playlist cache with per-source TTL (short for Pluto)
-* Pluto SSAI fix — EXT-X-DISCONTINUITY-aware cache eviction + 403 retry
+* Pluto SSAI freeze fix (see below)
 * Segment prefetch (background threads)
 * Per-source CDN header injection
 * Redirect chain following
-* Thread-safe (works with Flask's threaded WSGI server and gunicorn)
+* Thread-safe (works with Flask threaded WSGI and gunicorn)
+
+Pluto CDN freeze fix
+--------------------
+Pluto TV uses Server-Side Ad Insertion (SSAI) via its CDN stitcher.  At every
+commercial-break boundary the stitcher rotates the signed segment URLs embedded
+in the variant playlist.  If a client (or this proxy) holds a cached variant
+playlist from before the rotation it will request now-expired segment URLs,
+which the CDN rejects with 403/410 — manifesting as a freeze or black screen.
+
+The fix is multi-layered:
+
+1.  EXT-X-DISCONTINUITY detection (disc counter)
+    Each time the proxy fetches a fresh Pluto variant playlist it counts the
+    #EXT-X-DISCONTINUITY tags.  A rising count means a new ad/content boundary
+    is imminent; the cached playlist is evicted immediately so the next client
+    request gets freshly-signed segment URLs.
+
+2.  EXT-X-DISCONTINUITY-SEQUENCE tracking
+    The stitcher increments EXT-X-DISCONTINUITY-SEQUENCE when the ad pod
+    changes.  We track the last seen value per variant URL and force-evict as
+    soon as it advances, even when the raw DISCONTINUITY tag count hasn't grown.
+
+3.  Aggressive short TTL for Pluto variant playlists (HLS_PLUTO_VARIANT_TTL,
+    default 6 s).  The HLS spec asks players to reload the playlist every
+    ~target-duration seconds; Pluto's target duration is 6–8 s, so a 6 s TTL
+    ensures we never serve a playlist that is more than one window stale.
+
+4.  Pre-emptive cache eviction on 403/410 segments
+    When a Pluto segment fetch returns 403 or 410 the proxy immediately evicts
+    both the variant cache entry *and* the disc counter, re-fetches the master
+    playlist (if changed), then retries up to 3 times with the freshest
+    available segment URL.
+
+5.  JWT/token passthrough
+    Pluto's stitcher URL already contains ?jwt=… signed tokens.  The proxy
+    preserves all query parameters verbatim when it re-fetches the master
+    playlist, ensuring tokens are not stripped.
 
 Registration (in your create_app() or app factory)
 ---------------------------------------------------
     from hls_proxy_blueprint import hls_proxy_bp, rewrite_stream_url
     app.register_blueprint(hls_proxy_bp, url_prefix="/hlsproxy")
 
-Then wherever FastChannels builds a channel stream URL, wrap it:
+Then wherever PlaylistManager builds a channel stream URL, wrap it:
     from hls_proxy_blueprint import rewrite_stream_url
     proxied = rewrite_stream_url(original_url, request)
-    # proxied == "http://localhost:5000/hlsproxy/playlist?url=<encoded>"
+    # → http://localhost:5000/hlsproxy/playlist?url=<encoded>
 
 Environment variables (all optional)
 -------------------------------------
-HLS_VARIANT_CACHE_TTL   Non-Pluto variant cache seconds (default 300)
-HLS_PLUTO_VARIANT_TTL   Pluto variant cache seconds    (default 20)
-HLS_SEGMENT_PREFETCH    Segments to prefetch ahead     (default 3)
-HLS_MAX_REDIRECTS       HTTP redirect limit            (default 5)
-HLS_REQUEST_TIMEOUT     Per-request timeout seconds    (default 15)
-HLS_PROXY_BASE_URL      Override base URL for rewritten URLs
-                        (default: auto-detected from request)
+HLS_VARIANT_CACHE_TTL     Non-Pluto variant cache seconds (default 300)
+HLS_PLUTO_VARIANT_TTL     Pluto variant cache seconds     (default 6)
+HLS_SEGMENT_PREFETCH      Segments to prefetch ahead      (default 3)
+HLS_MAX_REDIRECTS         HTTP redirect limit             (default 5)
+HLS_REQUEST_TIMEOUT       Per-request timeout seconds     (default 15)
+HLS_PROXY_BASE_URL        Override base URL for rewritten URLs
+                          (default: auto-detected from request)
 """
 
 import logging
@@ -55,11 +88,13 @@ log = logging.getLogger(__name__)
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 VARIANT_CACHE_TTL = int(os.getenv("HLS_VARIANT_CACHE_TTL", 300))
-PLUTO_VARIANT_TTL = int(os.getenv("HLS_PLUTO_VARIANT_TTL", 20))
+# 6 s = one Pluto target-duration; anything longer causes stale signed URLs
+# at commercial breaks which freeze the stream.
+PLUTO_VARIANT_TTL = int(os.getenv("HLS_PLUTO_VARIANT_TTL", 6))
 SEGMENT_PREFETCH  = int(os.getenv("HLS_SEGMENT_PREFETCH", 3))
 MAX_REDIRECTS     = int(os.getenv("HLS_MAX_REDIRECTS", 5))
 REQUEST_TIMEOUT   = int(os.getenv("HLS_REQUEST_TIMEOUT", 15))
-PROXY_BASE_URL    = os.getenv("HLS_PROXY_BASE_URL", "")   # e.g. "http://fastchannels:5000"
+PROXY_BASE_URL    = os.getenv("HLS_PROXY_BASE_URL", "")   # e.g. "http://playlistmanager:5000"
 
 _executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="hlsproxy")
 
@@ -206,28 +241,63 @@ _vcache = _VariantCache()
 
 class _DiscTracker:
     """
-    Tracks #EXT-X-DISCONTINUITY count per variant URL.
-    A rising count means Pluto's stitcher has issued a new JWT for the
-    new ad-break segment URLs — evict the cached playlist immediately so
-    the next segment request gets freshly signed URLs.
+    Tracks #EXT-X-DISCONTINUITY count AND #EXT-X-DISCONTINUITY-SEQUENCE value
+    per variant URL.
+
+    Pluto's SSAI stitcher rotates signed segment URLs at every ad/content
+    boundary.  Two signals indicate a rotation has happened:
+
+    1. The raw #EXT-X-DISCONTINUITY tag count rises (new boundary entered
+       the sliding window).
+    2. The EXT-X-DISCONTINUITY-SEQUENCE header value advances (the stitcher
+       has rolled the window past older boundaries).
+
+    Either signal triggers an immediate cache eviction so the next client
+    request fetches freshly-signed segment URLs instead of expired ones.
     """
     def __init__(self):
-        self._counts: Dict[str, int] = {}
+        self._counts:   Dict[str, int] = {}
+        self._sequences: Dict[str, int] = {}
         self._lock = threading.Lock()
 
+    def _parse_disc_sequence(self, body: str) -> int:
+        """Extract EXT-X-DISCONTINUITY-SEQUENCE value, default 0."""
+        for line in body.splitlines():
+            s = line.strip()
+            if s.startswith("#EXT-X-DISCONTINUITY-SEQUENCE:"):
+                try:
+                    return int(s.split(":", 1)[1])
+                except ValueError:
+                    pass
+        return 0
+
     def check_and_evict(self, url: str, body: str) -> bool:
-        new = body.count("#EXT-X-DISCONTINUITY")
+        new_count = body.count("#EXT-X-DISCONTINUITY")
+        new_seq   = self._parse_disc_sequence(body)
+        evict     = False
         with self._lock:
-            old = self._counts.get(url, 0)
-            self._counts[url] = new
-            if new > old:
-                log.info("Pluto disc %d→%d, evicting cache: %.80s", old, new, url)
-                return True
-        return False
+            old_count = self._counts.get(url, 0)
+            old_seq   = self._sequences.get(url, 0)
+            self._counts[url]    = new_count
+            self._sequences[url] = new_seq
+            if new_count > old_count:
+                log.info(
+                    "Pluto disc-count %d→%d, evicting variant cache: %.80s",
+                    old_count, new_count, url,
+                )
+                evict = True
+            if new_seq > old_seq:
+                log.info(
+                    "Pluto disc-seq %d→%d, evicting variant cache: %.80s",
+                    old_seq, new_seq, url,
+                )
+                evict = True
+        return evict
 
     def reset(self, url: str):
         with self._lock:
             self._counts.pop(url, None)
+            self._sequences.pop(url, None)
 
 
 _disc = _DiscTracker()
@@ -307,34 +377,48 @@ def _pluto_fetch_segment(seg_url: str, variant_url: str) -> Tuple[int, bytes, di
     if status not in (403, 410):
         return status, data, hdrs
 
-    log.warning("Pluto seg 403 — refreshing variant: %.80s", variant_url)
+    log.warning("Pluto seg %d — refreshing variant (up to 3 attempts): %.80s", status, variant_url)
 
-    for attempt in range(2):
+    for attempt in range(3):
+        # Evict everything — disc sequence, variant cache, prefetch buffer
         _vcache.invalidate(variant_url)
         _disc.reset(variant_url)
-        time.sleep(0.4)
+        time.sleep(0.3 * (attempt + 1))   # 0.3 s, 0.6 s, 0.9 s
 
-        vs, vbody, vhdrs, _ = _fetch_text(variant_url)
+        vs, vbody, vhdrs, vfinal = _fetch_text(variant_url)
         if vs != 200:
             log.warning("Pluto variant re-fetch %d (attempt %d)", vs, attempt + 1)
             continue
 
         _vcache.put(variant_url, vbody, vhdrs)
-        new_seg = _first_seg_url(variant_url, vbody)
+
+        # Run disc-check on fresh body so the sequence state is updated
+        _disc.check_and_evict(variant_url, vbody)
+
+        new_seg = _first_seg_url(vfinal, vbody)
         if not new_seg:
+            log.warning("Pluto: no segment in refreshed variant (attempt %d)", attempt + 1)
             continue
 
         status, data, hdrs = _fetch_bytes(new_seg)
         if status == 200:
-            log.info("Pluto 403 retry ok (attempt %d)", attempt + 1)
+            log.info("Pluto segment recovered after %d attempt(s)", attempt + 1)
             return status, data, hdrs
 
-    log.error("Pluto seg failed after retries: %.80s", seg_url)
+        log.warning("Pluto retry seg still %d (attempt %d)", status, attempt + 1)
+
+    log.error("Pluto segment failed after 3 retries: %.80s", seg_url)
     return status, data, hdrs
 
 
-def _first_seg_url(variant_url: str, body: str) -> str:
-    base = variant_url.rsplit("/", 1)[0]
+def _first_seg_url(base_url: str, body: str) -> str:
+    """Return the first segment URL from a variant playlist body.
+
+    base_url should be the *final* (post-redirect) URL so that relative
+    paths are resolved correctly even when the CDN redirects to a different
+    origin.
+    """
+    base = base_url.rsplit("/", 1)[0]
     for line in body.splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
@@ -359,8 +443,8 @@ def _base_url() -> str:
 
 def rewrite_stream_url(upstream_url: str, req=None) -> str:
     """
-    Convert an upstream HLS URL into a proxied FastChannels URL.
-    Call this wherever FastChannels builds channel stream URLs.
+    Convert an upstream HLS URL into a proxied PlaylistManager URL.
+    Call this wherever PlaylistManager builds channel stream URLs.
 
     Example:
         from hls_proxy_blueprint import rewrite_stream_url
@@ -535,11 +619,11 @@ _REGISTRATION_HINT = """
 │  wherever the M3U playlist is generated):                                  │
 │                                                                            │
 │    stream_url = rewrite_stream_url(upstream_url)                          │
-│    # → http://fastchannels:5000/hlsproxy/playlist?url=<encoded>           │
+│    # → http://playlistmanager:5000/hlsproxy/playlist?url=<encoded>           │
 │                                                                            │
-│  Set HLS_PROXY_BASE_URL env var if FastChannels runs behind a             │
+│  Set HLS_PROXY_BASE_URL env var if PlaylistManager runs behind a             │
 │  reverse proxy or on a non-standard port, e.g.:                           │
-│    HLS_PROXY_BASE_URL=http://fastchannels:5000                            │
+│    HLS_PROXY_BASE_URL=http://playlistmanager:5000                            │
 │                                                                            │
 └────────────────────────────────────────────────────────────────────────────┘
 """

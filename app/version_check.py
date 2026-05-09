@@ -58,7 +58,7 @@ def _write_cache(payload: dict) -> None:
 def _fetch_latest(repo: str) -> dict:
     headers = {
         'Accept': 'application/vnd.github+json',
-        'User-Agent': 'FastChannels-VersionCheck',
+        'User-Agent': 'PlaylistManager-VersionCheck',
     }
     release_url = f'https://api.github.com/repos/{repo}/releases/latest'
     tags_url = f'https://api.github.com/repos/{repo}/tags?per_page=1'

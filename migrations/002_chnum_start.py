@@ -1,11 +1,11 @@
 """
 Migration: add chnum_start to sources and feeds tables.
-Run with: docker exec fastchannelsv2 python /app/migrations/002_chnum_start.py
+Run with: docker exec playlistmanagerv2 python /app/migrations/002_chnum_start.py
 Safe to re-run — checks before altering anything.
 """
 import sqlite3
 
-DB_PATH = '/data/fastchannels.db'
+DB_PATH = '/data/playlistmanager.db'
 
 con = sqlite3.connect(DB_PATH)
 cur = con.cursor()

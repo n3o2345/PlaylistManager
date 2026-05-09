@@ -125,7 +125,7 @@ def _fetch_and_cache(url: str, img_path: str, ct_path: str,
                      img_type: str = 'logo') -> bool:
     """Fetch *url* and write it to *img_path*/*ct_path*. Returns True on success."""
     try:
-        r = _session.get(url, timeout=10, headers={'User-Agent': 'FastChannels/1.0'})
+        r = _session.get(url, timeout=10, headers={'User-Agent': 'PlaylistManager/1.0'})
         if not r.ok:
             logger.debug('[images] fetch HTTP %s for %s', r.status_code, url)
             return False

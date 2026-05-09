@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class AmazonPrimeFreeScraper(BaseScraper):
     """
-    FastChannels scraper for Amazon Prime Video free linear (FAST) channels.
+    PlaylistManager scraper for Amazon Prime Video free linear (FAST) channels.
 
     - Scrapes channel metadata from the Live TV page and paginated collection API.
     - Builds near-term EPG from the station.schedule arrays embedded in those responses.
