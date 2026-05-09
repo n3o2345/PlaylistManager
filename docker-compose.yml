@@ -6,7 +6,7 @@ services:
     ports:
       - '5523:5523'
     volumes:
-      - /mnt/System/Apps/FastChannels/db_data:/data
+      - db_data:/data
     environment:
       # ── Embedded tvapp2 daemon ──────────────────────────────────────────────
       # tvapp2 runs internally on localhost:4124. Set TVAPP2_ENABLED=0 to
