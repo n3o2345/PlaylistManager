@@ -84,7 +84,7 @@ class HDHomeRunScraper(BaseScraper):
             default="hts",
             options=_QUALITY_OPTIONS,
             help_text=(
-                "Transcode quality. 'Full (HTS)' is the best choice for Channels DVR. "
+                "Transcode quality. 'Full (HTS)' works well with most IPTV players. "
                 "'Full (raw)' bypasses the built-in transcoder for maximum quality."
             ),
         ),

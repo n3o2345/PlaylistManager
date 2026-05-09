@@ -680,7 +680,7 @@ def generate_m3u(filters: dict = None, base_url: str = None,
     """
     Standard XMLTV-backed playlist.
     Excludes channels with a valid Gracenote ID — those belong in /m3u/gracenote
-    so Channels DVR doesn't mix EPG sources within a single M3U source.
+    so players don't mix EPG sources within a single M3U source.
 
     Channel numbering (tvg-chno):
       - feed_chnum_start set  → sequential from that number for all channels in this feed
@@ -743,7 +743,7 @@ def generate_gracenote_m3u(filters: dict = None, base_url: str = None,
                             feed_chnum_start: int = None, namespace_start: int = None,
                             feed_id: int = None) -> str:
     """
-    Gracenote-backed playlist for Channels DVR.
+    Gracenote-backed playlist (tvc-guide-stationid).
 
     Only includes channels with a valid Gracenote ID (from channel.gracenote_id
     or the legacy "{play_id}|{gracenote_id}" slug encoding).
@@ -857,7 +857,7 @@ _VALID_VCODECS = {'h264', 'mpeg2', 'hevc'}
 
 def _tvc_stream_codecs(stream_info: dict) -> tuple[str | None, str | None]:
     """Return (vcodec, acodec) strings for tvc-stream-vcodec/acodec, or None if unknown.
-    Only emits values Channels DVR recognises; 'unknown' and unrecognised codecs are suppressed.
+    Only emits values supported players recognise; 'unknown' and unrecognised codecs are suppressed.
     """
     raw = (stream_info.get('video_codec') or '').lower()
     vcodec = raw if raw in _VALID_VCODECS else None

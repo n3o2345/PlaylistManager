@@ -43,14 +43,6 @@ def build_setup_checklist(app_settings, sources_by_name: dict, scrapers_by_name:
             'section': 'settings',
         })
 
-    if not (app_settings.channels_dvr_url or '').strip() and app_settings.env_channels_dvr_url() is None:
-        items.append({
-            'key': 'channels_dvr_url',
-            'label': 'Set Channels DVR URL',
-            'href': '/admin/settings#settings-card-channels-dvr',
-            'section': 'settings',
-        })
-
     if not (app_settings.timezone_name or '').strip():
         items.append({
             'key': 'timezone_name',

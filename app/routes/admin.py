@@ -681,12 +681,6 @@ def settings():
             'label': 'PlaylistManager Server URL',
             'anchor': 'settings-card-public-base-url',
         })
-    if not (app_settings.channels_dvr_url or '').strip() and app_settings.env_channels_dvr_url() is None:
-        settings_needs_config.append({
-            'key': 'channels_dvr_url',
-            'label': 'Channels DVR',
-            'anchor': 'settings-card-channels-dvr',
-        })
     if not (app_settings.timezone_name or '').strip():
         settings_needs_config.append({
             'key': 'timezone_name',
@@ -694,18 +688,15 @@ def settings():
             'anchor': 'settings-card-timezone',
         })
     return render_template('admin/settings.html',
-                           channels_dvr_url=app_settings.effective_channels_dvr_url() or '',
                            public_base_url=app_settings.effective_public_base_url() or '',
                            timezone_name=app_settings.effective_timezone_name(),
                            timezone_name_from_db=(app_settings.timezone_name or '').strip(),
                            timezone_choices=timezone_choices(),
-                           channels_dvr_url_from_env=(not (app_settings.channels_dvr_url or '').strip()) and app_settings.env_channels_dvr_url() is not None,
                            public_base_url_from_env=(not (app_settings.public_base_url or '').strip()) and app_settings.env_public_base_url() is not None,
                            settings_needs_config=settings_needs_config,
                            request_base_url=request_base_url,
                            detected_base_url=detected_base_url(),
                            gracenote_auto_fill=app_settings.gracenote_auto_fill if app_settings.gracenote_auto_fill is not None else True,
-                           dvr_epg_auto_refresh=app_settings.dvr_epg_auto_refresh if app_settings.dvr_epg_auto_refresh is not None else True,
                            image_proxy_enabled=app_settings.image_proxy_enabled if app_settings.image_proxy_enabled is not None else True,
                            gracenote_contribution_url=app_settings.gracenote_contribution_url or '')
 

@@ -1842,7 +1842,7 @@
             </div>
             <div class="preview-player-status" id="preview-player-status"></div>
             <div class="preview-note">
-              Browser playback depends on the stream format, source restrictions, and DRM. If playback fails here, the channel may still work in Channels DVR or another HLS client.
+              Browser playback depends on the stream format, source restrictions, and DRM. If playback fails here, the channel may still work in VLC or another HLS client.
             </div>
           </div>
         `;
@@ -1893,9 +1893,9 @@
           if (status) {
             const details = data?.details || '';
             if (details.includes('IncompatibleCodecs') || details.includes('incompatibleCodecs')) {
-              status.textContent = 'Browser preview unavailable: this stream uses a codec (e.g. HEVC/H.265) that your browser cannot decode. Use "Open Externally" to play in VLC or Channels DVR.';
+              status.textContent = 'Browser preview unavailable: this stream uses a codec (e.g. HEVC/H.265) that your browser cannot decode. Use "Open Externally" to play in VLC or another player.';
             } else if (details === 'bufferStalledError') {
-              status.textContent = 'Browser preview stalled: the stream buffer could not be filled. This is common with HEVC/H.265 (4K) channels — use "Open Externally" to play in VLC or Channels DVR.';
+              status.textContent = 'Browser preview stalled: the stream buffer could not be filled. This is common with HEVC/H.265 (4K) channels — use "Open Externally" to play in VLC or another player.';
             } else if (details.includes('manifestLoad') || details.includes('manifestParse')) {
               status.textContent = 'Browser preview unavailable for this source (CORS restriction on stream CDN). Use "Open Externally" to play outside the browser preview.';
             } else {

@@ -11,7 +11,7 @@ PlaylistManager re-wraps at play time and proxies everything server-side.
 
 EPG comes from Gracenote — tvapp2 tvg-ids are "<gracenote_station_id>.<call>"
 (e.g. "111871.571ACC") so the Gracenote station ID is extracted directly and
-stored on the channel, letting Channels DVR / Dispatcharr use Gracenote guide
+stored on the channel, letting supported players use Gracenote guide
 data without any XMLTV feed from tvapp2.
 
 Dead streams are auto-disabled via stream_audit_enabled = True.

@@ -53,7 +53,7 @@ def detected_base_url() -> str:
 _LOGO_CACHE_ROOT   = '/data/logo_cache/logos'
 _POSTER_CACHE_ROOT = '/data/logo_cache/posters'
 
-# Formats that Channels DVR native apps (Android TV, iOS, etc.) cannot display.
+# Formats that many IPTV player apps cannot display.
 # Fall back to the upstream CDN URL for these so the client gets something usable.
 _UNSUPPORTED_TYPES = ('webp', 'svg')
 
@@ -71,7 +71,7 @@ def proxy_logo_url(url: str | None, base_url: str, img_type: str = 'logo', image
     artifact becomes dependent on the poster cache state at build time and can
     emit stale /posters/... URLs after cache clears.
 
-    WebP/SVG cached files fall back to the upstream URL because Channels DVR
+    WebP/SVG cached files fall back to the upstream URL because many players
     native apps cannot display those formats.
     """
     if not url or not base_url:
@@ -121,7 +121,7 @@ def public_base_url() -> str:
     settings_value = (AppSettings.get().effective_public_base_url() or "").strip().rstrip("/")
     if settings_value:
         # User explicitly set a URL — honour it as-is. If they've configured
-        # http:// deliberately (e.g. Channels DVR accesses PlaylistManager directly
+        # http:// deliberately (e.g. players may access PlaylistManager directly
         # over HTTP while the admin UI is behind an HTTPS reverse proxy) we must
         # not silently upgrade the scheme or feed/play URLs will break.
         return settings_value

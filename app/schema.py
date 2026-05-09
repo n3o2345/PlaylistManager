@@ -134,10 +134,6 @@ def ensure_runtime_schema() -> None:
                 conn.execute(text(
                     "ALTER TABLE app_settings ADD COLUMN last_contribution_at DATETIME"
                 ))
-            if "dvr_epg_auto_refresh" not in cols:
-                conn.execute(text(
-                    "ALTER TABLE app_settings ADD COLUMN dvr_epg_auto_refresh BOOLEAN NOT NULL DEFAULT 1"
-                ))
             if "image_proxy_enabled" not in cols:
                 conn.execute(text(
                     "ALTER TABLE app_settings ADD COLUMN image_proxy_enabled BOOLEAN NOT NULL DEFAULT 1"

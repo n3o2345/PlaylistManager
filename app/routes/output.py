@@ -125,7 +125,7 @@ def m3u():
 @output_bp.route('/m3u/gracenote')
 def m3u_gracenote():
     """
-    Gracenote-backed M3U for Channels DVR.
+    Gracenote-backed M3U (tvc-guide-stationid).
 
     Contains only channels with a valid Gracenote ID in their slug
     (stored as "{play_id}|{gracenote_id}" by the Roku scraper).

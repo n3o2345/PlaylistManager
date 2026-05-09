@@ -224,9 +224,6 @@ def _parse_hls_variants(master_text: str) -> list[dict]:
     variants.sort(key=lambda v: v.get('bandwidth', 0), reverse=True)
     return variants
 
-_CHANNELS_DVR_RECOMMENDED_MAX = 750
-
-
 def _invalidate_and_refresh_xml() -> None:
     invalidate_xml_cache()
     trigger_xml_refresh()
@@ -240,30 +237,6 @@ def _isoformat_utc(dt):
     else:
         dt = dt.astimezone(timezone.utc)
     return dt.isoformat()
-
-
-def _ensure_feed_dvr_artifacts(feed: Feed, base_url: str, *, has_gracenote: bool) -> None:
-    """Wait briefly for feed artifacts to exist before handing URLs to Channels DVR."""
-    def _ready() -> bool:
-        xml_path, _ = get_xml_artifact(f'feed-{feed.slug}')
-        if get_artifact(f'feed-{feed.slug}-m3u', ext='m3u') is None:
-            return False
-        if xml_path is None:
-            return False
-        if has_gracenote and get_artifact(f'feed-{feed.slug}-gracenote-m3u', ext='m3u') is None:
-            return False
-        return True
-
-    if _ready():
-        return
-
-    trigger_xml_refresh()
-    deadline = _time.time() + 20
-    while _time.time() < deadline:
-        if _ready():
-            return
-        _time.sleep(0.2)
-    raise TimeoutError(f'timed out waiting for feed artifacts: {feed.slug}')
 
 
 def _channel_query_summary(query, parse_gracenote) -> tuple[int, bool]:
@@ -1294,31 +1267,8 @@ def _csv_suggestion_for(ch) -> dict | None:
 @api_bp.route('/channels/<int:channel_id>/gracenote-suggestions', methods=['GET'])
 def channel_gracenote_suggestions(channel_id):
     ch = Channel.query.get_or_404(channel_id)
-    settings = AppSettings.get()
-    dvr_url = (settings.effective_channels_dvr_url() or '').strip()
-
     limit = max(1, min(request.args.get('limit', 10, type=int) or 10, 25))
-
-    if dvr_url:
-        try:
-            data = suggest_gracenote_matches(
-                dvr_url,
-                channel=SuggestionChannel(
-                    id=ch.id,
-                    name=ch.name,
-                    source_name=ch.source.name if ch.source else None,
-                    country=ch.country,
-                    language=ch.language,
-                    category=ch.category,
-                    gracenote_id=ch.gracenote_id,
-                ),
-                limit=limit,
-            )
-        except ValueError as exc:
-            return jsonify({'error': str(exc)}), 502
-    else:
-        data = {'results': [], 'dvr_missing': True}
-
+    data = {'results': [], 'dvr_missing': True}
     data['channel'] = {
         'id': ch.id,
         'name': ch.name,
@@ -1331,24 +1281,6 @@ def channel_gracenote_suggestions(channel_id):
         'csv_suggestion': _csv_suggestion_for(ch),
     }
     return jsonify(data)
-
-
-@api_bp.route('/gracenote-search', methods=['GET'])
-def gracenote_search():
-    query = (request.args.get('q') or '').strip()
-    if not query:
-        return jsonify({'error': 'Missing q parameter.'}), 400
-
-    settings = AppSettings.get()
-    dvr_url = (settings.effective_channels_dvr_url() or '').strip()
-    if not dvr_url:
-        return jsonify({'error': 'Channels DVR URL is not configured.'}), 400
-
-    limit = max(1, min(request.args.get('limit', 10, type=int) or 10, 25))
-    try:
-        return jsonify(suggest_gracenote_matches(dvr_url, query=query, limit=limit))
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 502
 
 
 @api_bp.route('/stations/<station_id>/now-playing', methods=['GET'])
@@ -2082,234 +2014,11 @@ def resolve_duplicates():
     })
 
 
-@api_bp.route('/feeds/<int:feed_id>/push-to-dvr', methods=['POST'])
-def push_feed_to_dvr(feed_id):
-    """Register this feed as custom M3U source(s) in Channels DVR.
-
-    Registers up to two sources:
-    - Gracenote source (no EPG URL): only if the feed has channels with
-      Gracenote IDs — DVR fetches its own guide data via tvc-guide-stationid.
-    - Standard source (with our EPG XML): always registered.
-    """
-    import re as _re
-    from ..generators.m3u import _build_channel_query, _parse_gracenote_id, feed_to_query_filters
-
-    feed = Feed.query.get_or_404(feed_id)
-    settings = AppSettings.get()
-
-    dvr_url = (settings.effective_channels_dvr_url() or '').strip()
-    if not dvr_url:
-        return jsonify({'error': 'Channels DVR URL is not configured in Settings.'}), 400
-
-    base = public_base_url()
-
-    # Check if this feed has any channels with Gracenote IDs using the same
-    # logic as generate_gracenote_m3u() so we don't register an empty source.
-    channel_count, has_gracenote = _channel_query_summary(
-        _build_channel_query(feed_to_query_filters(feed.filters or {})),
-        _parse_gracenote_id,
-    )
-    if channel_count == 0:
-        return jsonify({'error': 'This feed has no eligible channels to add to Channels DVR.'}), 400
-
-    # standard_count = channels that go into the regular M3U (non-gracenote channels)
-    split = _feed_split_counts(feed)
-    standard_count = split['standard_count']
-
-    force = bool((request.get_json(silent=True) or {}).get('force'))
-    if channel_count > _CHANNELS_DVR_RECOMMENDED_MAX and not force:
-        return jsonify({
-            'error': f'This feed has {channel_count} channels. Channels DVR usually works best at 750 or fewer.',
-            'requires_confirm': True,
-            'channel_count': channel_count,
-            'recommended_max': _CHANNELS_DVR_RECOMMENDED_MAX,
-        }), 409
-
-    try:
-        _ensure_feed_dvr_artifacts(feed, base, has_gracenote=has_gracenote)
-    except TimeoutError:
-        return jsonify({'error': 'Timed out waiting for feed artifacts to build. Try again in a moment.'}), 503
-
-    def _put(name, url, xmltv_url=''):
-        safe = _re.sub(r'[^a-zA-Z0-9]', '', name)
-        payload = {
-            'name':    name,
-            'type':    'HLS',
-            'source':  'URL',
-            'url':     url,
-            'refresh': '24',
-        }
-        if xmltv_url:
-            payload['xmltv_url']     = xmltv_url
-            payload['xmltv_refresh'] = '3600'
-        return _req.put(f"{dvr_url}/providers/m3u/sources/{safe}", json=payload, timeout=30)
-
-    gn_name  = f"PlaylistManager {feed.name} Gracenote"
-    epg_name = f"PlaylistManager {feed.name}"
-    sources_added = []
-
-    try:
-        if has_gracenote:
-            r1 = _put(gn_name, f"{base}/feeds/{feed.slug}/m3u/gracenote")
-            r1.raise_for_status()
-            sources_added.append(gn_name)
-
-        if standard_count > 0:
-            r2 = _put(epg_name, f"{base}/feeds/{feed.slug}/m3u", f"{base}/feeds/{feed.slug}/epg.xml")
-            r2.raise_for_status()
-            sources_added.append(epg_name)
-    except _req.exceptions.ConnectionError:
-        return jsonify({'error': f'Could not connect to Channels DVR at {dvr_url}'}), 502
-    except _req.exceptions.Timeout:
-        return jsonify({'error': 'Channels DVR timed out.'}), 504
-    except _req.exceptions.HTTPError as exc:
-        resp = exc.response
-        return jsonify({'error': f'DVR {resp.status_code}: {resp.text[:300]}'}), 502
-
-    return jsonify({'ok': True, 'sources_added': sources_added})
-
-
-@api_bp.route('/sources/<int:source_id>/push-to-dvr', methods=['POST'])
-def push_source_to_dvr(source_id):
-    """Register a source-filtered raw output as custom M3U source(s) in Channels DVR."""
-    import re as _re
-    from ..generators.m3u import _build_channel_query, _parse_gracenote_id
-
-    source = Source.query.get_or_404(source_id)
-    settings = AppSettings.get()
-
-    dvr_url = (settings.effective_channels_dvr_url() or '').strip()
-    if not dvr_url:
-        return jsonify({'error': 'Channels DVR URL is not configured in Settings.'}), 400
-
-    base = public_base_url()
-    channel_count, has_gracenote = _channel_query_summary(
-        _build_channel_query({'source': [source.name]}),
-        _parse_gracenote_id,
-    )
-    if channel_count == 0:
-        return jsonify({'error': f'{source.display_name} has no eligible channels to add to Channels DVR.'}), 400
-    force = bool((request.get_json(silent=True) or {}).get('force'))
-    if channel_count > _CHANNELS_DVR_RECOMMENDED_MAX and not force:
-        return jsonify({
-            'error': f'{source.display_name} has {channel_count} channels. Channels DVR usually works best at 750 or fewer.',
-            'requires_confirm': True,
-            'channel_count': channel_count,
-            'recommended_max': _CHANNELS_DVR_RECOMMENDED_MAX,
-        }), 409
-
-    def _put(name, url, xmltv_url=''):
-        safe = _re.sub(r'[^a-zA-Z0-9]', '', name)
-        payload = {
-            'name': name,
-            'type': 'HLS',
-            'source': 'URL',
-            'url': url,
-            'refresh': '24',
-        }
-        if xmltv_url:
-            payload['xmltv_url'] = xmltv_url
-            payload['xmltv_refresh'] = '3600'
-        return _req.put(f"{dvr_url}/providers/m3u/sources/{safe}", json=payload, timeout=30)
-
-    query_param = f"?source={source.name}"
-    std_name = f"PlaylistManager {source.display_name}"
-    gn_name = f"PlaylistManager {source.display_name} Gracenote"
-    sources_added = []
-
-    try:
-        if has_gracenote:
-            r1 = _put(gn_name, f"{base}/m3u/gracenote{query_param}")
-            r1.raise_for_status()
-            sources_added.append(gn_name)
-
-        r2 = _put(std_name, f"{base}/m3u{query_param}", f"{base}/epg.xml{query_param}")
-        r2.raise_for_status()
-        sources_added.append(std_name)
-    except _req.exceptions.ConnectionError:
-        return jsonify({'error': f'Could not connect to Channels DVR at {dvr_url}'}), 502
-    except _req.exceptions.Timeout:
-        return jsonify({'error': 'Channels DVR timed out.'}), 504
-    except _req.exceptions.HTTPError as exc:
-        resp = exc.response
-        return jsonify({'error': f'DVR {resp.status_code}: {resp.text[:300]}'}), 502
-
-    return jsonify({'ok': True, 'sources_added': sources_added})
-
-
-@api_bp.route('/raw-output/push-to-dvr', methods=['POST'])
-def push_raw_output_to_dvr():
-    """Register the full raw output M3U source(s) in Channels DVR."""
-    import re as _re
-    from ..generators.m3u import _build_channel_query, _parse_gracenote_id
-
-    settings = AppSettings.get()
-
-    dvr_url = (settings.effective_channels_dvr_url() or '').strip()
-    if not dvr_url:
-        return jsonify({'error': 'Channels DVR URL is not configured in Settings.'}), 400
-
-    base = public_base_url()
-    channel_count, has_gracenote = _channel_query_summary(
-        _build_channel_query({}),
-        _parse_gracenote_id,
-    )
-    if channel_count == 0:
-        return jsonify({'error': 'Raw Output has no eligible channels to add to Channels DVR.'}), 400
-    force = bool((request.get_json(silent=True) or {}).get('force'))
-    if channel_count > _CHANNELS_DVR_RECOMMENDED_MAX and not force:
-        return jsonify({
-            'error': f'Raw Output has {channel_count} channels. Channels DVR usually works best at 750 or fewer.',
-            'requires_confirm': True,
-            'channel_count': channel_count,
-            'recommended_max': _CHANNELS_DVR_RECOMMENDED_MAX,
-        }), 409
-
-    def _put(name, url, xmltv_url=''):
-        safe = _re.sub(r'[^a-zA-Z0-9]', '', name)
-        payload = {
-            'name': name,
-            'type': 'HLS',
-            'source': 'URL',
-            'url': url,
-            'refresh': '24',
-        }
-        if xmltv_url:
-            payload['xmltv_url'] = xmltv_url
-            payload['xmltv_refresh'] = '3600'
-        return _req.put(f"{dvr_url}/providers/m3u/sources/{safe}", json=payload, timeout=8)
-
-    std_name = 'PlaylistManager Raw Output'
-    gn_name = 'PlaylistManager Raw Output Gracenote'
-    sources_added = []
-
-    try:
-        if has_gracenote:
-            r1 = _put(gn_name, f"{base}/m3u/gracenote")
-            r1.raise_for_status()
-            sources_added.append(gn_name)
-
-        r2 = _put(std_name, f"{base}/m3u", f"{base}/epg.xml")
-        r2.raise_for_status()
-        sources_added.append(std_name)
-    except _req.exceptions.ConnectionError:
-        return jsonify({'error': f'Could not connect to Channels DVR at {dvr_url}'}), 502
-    except _req.exceptions.Timeout:
-        return jsonify({'error': 'Channels DVR timed out.'}), 504
-    except _req.exceptions.HTTPError as exc:
-        resp = exc.response
-        return jsonify({'error': f'DVR {resp.status_code}: {resp.text[:300]}'}), 502
-
-    return jsonify({'ok': True, 'sources_added': sources_added})
-
-
 @api_bp.route('/settings', methods=['GET', 'POST'])
 def app_settings():
     row = AppSettings.get()
     if request.method == 'POST':
         data = request.get_json(force=True) or {}
-        if 'channels_dvr_url' in data:
-            row.channels_dvr_url = _normalize_server_url(data['channels_dvr_url'], default_port=8089)
         if 'public_base_url' in data:
             row.public_base_url = _normalize_server_url(data['public_base_url'], default_port=5523)
         if 'timezone_name' in data:
@@ -2319,8 +2028,6 @@ def app_settings():
             row.timezone_name = tz_name
         if 'gracenote_auto_fill' in data:
             row.gracenote_auto_fill = bool(data['gracenote_auto_fill'])
-        if 'dvr_epg_auto_refresh' in data:
-            row.dvr_epg_auto_refresh = bool(data['dvr_epg_auto_refresh'])
         if 'image_proxy_enabled' in data:
             row.image_proxy_enabled = bool(data['image_proxy_enabled'])
         if 'gracenote_map_url' in data:
@@ -2332,19 +2039,15 @@ def app_settings():
         _invalidate_and_refresh_xml()
         row = AppSettings.get()
     return jsonify({
-        'channels_dvr_url':  row.effective_channels_dvr_url(),
         'public_base_url':   row.effective_public_base_url(),
         'timezone_name':     row.effective_timezone_name(),
         'gracenote_auto_fill': row.gracenote_auto_fill if row.gracenote_auto_fill is not None else True,
-        'dvr_epg_auto_refresh': row.dvr_epg_auto_refresh if row.dvr_epg_auto_refresh is not None else True,
         'image_proxy_enabled': row.image_proxy_enabled if row.image_proxy_enabled is not None else True,
         'gracenote_map_url': row.gracenote_map_url or '',
         'gracenote_contribution_url': row.gracenote_contribution_url or '',
-        'channels_dvr_url_source': 'db' if (row.channels_dvr_url or '').strip() else ('env' if row.env_channels_dvr_url() is not None else 'unset'),
         'public_base_url_source': 'db' if (row.public_base_url or '').strip() else ('env' if row.env_public_base_url() is not None else 'unset'),
         'timezone_name_source': 'db' if (row.timezone_name or '').strip() else 'system',
     })
-
 
 @api_bp.route('/settings/gracenote-auto-clear', methods=['POST'])
 def gracenote_auto_clear():

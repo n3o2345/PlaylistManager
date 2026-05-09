@@ -108,7 +108,7 @@
           <li>Use <code>Sources</code> to enable providers, configure credentials, and run scrapes.</li>
           <li>Use <code>Channels</code> to enable, disable, inspect, and resolve duplicates.</li>
           <li>Use <code>Feeds</code> to build named M3U + EPG outputs for your players.</li>
-          <li>Use <code>Settings</code> to configure your server URL and Channels DVR address.</li>
+          <li>Use <code>Settings</code> to configure your server URL and time zone.</li>
         </ul>
       </section>
 
@@ -137,8 +137,8 @@
           <li>Create custom feeds to filter by source, category, language, or a hand-picked channel list.</li>
           <li>Each feed has its own stable <code>/feeds/&lt;slug&gt;/m3u</code> and <code>/epg.xml</code> — cached for fast delivery.</li>
           <li>Set <code>Channel Number Start</code> on a feed to number channels sequentially from a given number.</li>
-          <li><code>/m3u/gracenote</code> feed variants are for Channels DVR guide matching via Gracenote.</li>
-          <li><code>Add to Channels DVR</code> registers the feed directly in your DVR. Configure the DVR URL in <code>Settings</code> first.</li>
+          <li><code>/m3u/gracenote</code> feed variants emit Gracenote station IDs for players that support guide matching (e.g. Plex, Emby).</li>
+          
         </ul>
       </section>
 
@@ -163,7 +163,7 @@
       <section class="card">
         <h2>Gracenote</h2>
         <ul>
-          <li>Gracenote IDs link channels to Channels DVR's guide database for rich EPG matching.</li>
+          <li>Gracenote IDs link channels to guide databases for rich EPG matching in supported players.</li>
           <li><strong>Auto</strong>: scrapers fill IDs automatically when available (e.g. Pluto's native station IDs). Controlled by the toggle in Settings.</li>
           <li><strong>Manual</strong>: you set the ID — it is never overwritten by a scrape. Use the Gracenote Helper popup on any channel row in Channels.</li>
           <li><strong>Community Map</strong>: curated CSV mappings for sources that don't expose native IDs.</li>

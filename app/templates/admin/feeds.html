@@ -23,9 +23,6 @@
     .btn-primary:hover { background: var(--accent-strong-hover); }
     .btn-danger  { background: transparent; color: var(--danger); border: 1px solid var(--danger-bg-2); font-size: 0.78rem; padding: 0.3rem 0.7rem; }
     .btn-danger:hover  { background: var(--danger-bg-2); }
-    .btn-dvr { background: var(--accent-bg); color: var(--accent-soft); border: 1px solid var(--accent-border); font-size: 0.78rem; padding: 0.3rem 0.7rem; border-radius: 6px; cursor: pointer; transition: background 0.15s; }
-    .btn-dvr:hover { background: var(--info); color: #fff; }
-    .btn-dvr:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-ghost   { background: transparent; color: var(--text-soft); border: 1px solid var(--border); }
     .btn-ghost:hover { color: var(--text); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -297,7 +294,7 @@
     <div>
       <h2>Output Feeds</h2>
       <p style="color:var(--text-muted);font-size:0.85rem;margin-top:0.25rem">
-        The built-in Default feed includes all enabled channels. Add custom feeds when you want smaller or filtered outputs for Channels DVR.
+        The built-in Default feed includes all enabled channels. Add custom feeds when you want smaller or filtered outputs for different players.
       </p>
     </div>
     <button class="btn btn-primary" onclick="openModal()">+ New Feed</button>
@@ -360,11 +357,6 @@
           <button class="btn btn-ghost" style="font-size:0.78rem;padding:0.3rem 0.7rem"
                   onclick='openModal({{ feed.to_dict(base_url)|tojson }})'>Edit</button>
           {% endif %}
-          {% set split = feed_split_counts.get(feed.id, {}) %}
-          {% set std_count = split.get('standard_count', feed.channel_count()) %}
-          <button class="btn btn-dvr" title="Register this feed as a custom M3U source in Channels DVR"
-                  onclick="pushToDvr({{ feed.id }}, '{{ feed.name|e }}', {{ feed.channel_count() }}, {{ std_count }}, this)"
-                  {% if feed.channel_count() == 0 %}disabled title="No channels in this feed"{% endif %}>📺 Add to Channels DVR</button>
           {% if feed.slug != 'default' %}
           <button class="btn btn-danger" onclick="deleteFeed({{ feed.id }}, '{{ feed.name|e }}', this)">Delete</button>
           {% endif %}
@@ -537,8 +529,8 @@
 
     <div class="field">
       <label>Max Channels</label>
-      <input type="number" id="f-max" min="1" max="9999" placeholder="750 recommended for Channels DVR">
-      <div class="help">Leave blank for no limit. Channels DVR degrades above ~750.</div>
+      <input type="number" id="f-max" min="1" max="9999" placeholder="e.g. 500">
+      <div class="help">Leave blank for no limit.</div>
     </div>
     <div class="field">
       <label>Starting Channel Number <span style="color:var(--text-dim);font-weight:400;text-transform:none">(tvg-chno)</span></label>
@@ -923,7 +915,7 @@ async function updateCountPreview() {
 
   const shown = max ? Math.min(total, max) : total;
   const pinnedExtra = _pinnedChannelIds.size;
-  const warn  = (shown + pinnedExtra) > 750 ? ' ⚠️ over 750 — Channels DVR may be slow' : '';
+  const warn  = (shown + pinnedExtra) > 750 ? '' : '';
   const pinnedNote = pinnedExtra > 0 ? ` + <strong>${pinnedExtra}</strong> pinned` : '';
   document.getElementById('count-preview').innerHTML =
     `<strong>${shown}</strong>${pinnedNote} channels will be in this feed${warn}`;
@@ -1026,56 +1018,6 @@ async function saveFeed() {
   }
 }
 
-
-// ── Push to Channels DVR ──────────────────────────────────────────────────
-async function pushToDvr(id, name, count, standardCount, btn, force = false) {
-  // Warn if the standard M3U (non-gracenote) exceeds the DVR recommended limit.
-  // If standardCount is 0 the standard M3U won't be registered, so skip the warning.
-  if (standardCount > 750 && !force) {
-    const ok = confirm(
-      `${name} has ${count} channels.\n\nChannels DVR usually works best at 750 or fewer.\n\nAdd it anyway?`
-    );
-    if (!ok) return;
-  }
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '⏳ Adding…';
-  try {
-    const r = await fetch(`/api/feeds/${id}/push-to-dvr`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(force || count > 750 ? {force: true} : {}),
-    });
-    const data = await r.json();
-    if (!r.ok) {
-      if (r.status === 400 && data.error?.includes('not configured')) {
-        alert('Channels DVR URL is not configured.\n\nGo to Settings and enter your Channels DVR server URL (e.g. http://192.168.1.x:8089).');
-      } else if (r.status === 409 && data.requires_confirm && !force) {
-        btn.disabled = false;
-        btn.textContent = orig;
-        return pushToDvr(id, name, count, standardCount, btn, true);
-      } else {
-        alert('Failed: ' + (data.error || `HTTP ${r.status}`));
-      }
-      btn.disabled = false;
-      btn.textContent = orig;
-      return;
-    }
-    btn.textContent = '✓ Added!';
-    btn.style.background = 'var(--success-bg-2)';
-    btn.style.color = 'var(--success-soft)';
-    setTimeout(() => {
-      btn.textContent = orig;
-      btn.style.background = '';
-      btn.style.color = '';
-      btn.disabled = false;
-    }, 3000);
-  } catch(e) {
-    alert('Error: ' + e.message);
-    btn.disabled = false;
-    btn.textContent = orig;
-  }
-}
 
 // ── Delete ────────────────────────────────────────────────────────────────
 async function deleteFeed(id, name, btn) {

@@ -1,6 +1,6 @@
 """
 Image proxy — caches remote logo/poster images locally so clients
-(e.g. Channels DVR) fetch from us instead of hitting source CDNs directly.
+(e.g. Plex, Emby, TiviMate) fetch from us instead of hitting source CDNs directly.
 
 Cache layout:
   /data/logo_cache/logos/    — channel station logos  (3-day TTL)
@@ -47,7 +47,7 @@ _POSTER_TTL   = 4 * 24 * 60 * 60   # safety-net; primary expiry is DB-driven
 _PREWARM_WORKERS = 4
 _LOGO_MAX_BYTES = 150 * 1024
 
-# Channels DVR logo constraints (community-confirmed):
+# Logo image constraints (community-confirmed):
 #   - max ~150 KB file size; oversized logos cause silent failures / crashes
 #   - recommended 720x540 (4:3) with padding; 1:1 squares also work
 #   - PNG preferred; WebP/SVG unsupported by native apps
@@ -75,7 +75,7 @@ def _is_fresh(img_path: str, ttl: int) -> bool:
 
 def _normalize_logo(data: bytes, source_content_type: str | None = None) -> tuple[bytes, str] | None:
     """
-    Resize and reformat a logo image for Channels DVR compatibility.
+    Resize and reformat a logo image for player compatibility.
 
     Strategy:
     - If the source is already a reasonably sized PNG/JPEG and under the

@@ -259,11 +259,9 @@ class AppSettings(db.Model):
 
     id                   = db.Column(db.Integer, primary_key=True)
     global_chnum_start   = db.Column(db.Integer, nullable=True)  # master tvg-chno start for ungrouped sources
-    channels_dvr_url     = db.Column(db.Text, nullable=True)     # e.g. http://192.168.1.x:8089
     public_base_url      = db.Column(db.Text, nullable=True)     # e.g. http://192.168.1.x:5523
     timezone_name        = db.Column(db.String(64), nullable=True)  # IANA timezone, e.g. America/New_York
     gracenote_auto_fill  = db.Column(db.Boolean, nullable=False, default=True)  # scrapers auto-assign Gracenote IDs
-    dvr_epg_auto_refresh = db.Column(db.Boolean, nullable=False, default=True)  # hourly PUT to Channels DVR lineups
     image_proxy_enabled  = db.Column(db.Boolean, nullable=False, default=True)  # proxy/cache logos and posters in output
     gracenote_map_url          = db.Column(db.Text, nullable=True)      # remote community CSV URL (defaults to built-in Gist)
     gracenote_contribution_url = db.Column(db.Text, nullable=True)      # webhook URL for submitting community contributions
@@ -291,11 +289,7 @@ class AppSettings(db.Model):
 
     @classmethod
     def env_public_base_url(cls) -> str | None:
-        return cls._env_str('FASTCHANNELS_SERVER_URL')
-
-    @classmethod
-    def env_channels_dvr_url(cls) -> str | None:
-        return cls._env_str('CHANNELS_DVR_SERVER_URL')
+        return cls._env_str('PLAYLISTMANAGER_SERVER_URL')
 
     def effective_global_chnum_start(self) -> int | None:
         # Primary source is now the default Feed's chnum_start column.
@@ -309,10 +303,6 @@ class AppSettings(db.Model):
     def effective_public_base_url(self) -> str | None:
         value = (self.public_base_url or '').strip().rstrip('/')
         return value or self.env_public_base_url()
-
-    def effective_channels_dvr_url(self) -> str | None:
-        value = (self.channels_dvr_url or '').strip().rstrip('/')
-        return value or self.env_channels_dvr_url()
 
     _DEFAULT_GRACENOTE_MAP_URL = (
         'https://gist.githubusercontent.com/kineticman/'
