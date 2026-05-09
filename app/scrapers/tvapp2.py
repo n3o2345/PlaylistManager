@@ -133,18 +133,6 @@ class TVApp2Scraper(BaseScraper):
             port = _DEFAULT_PORT
         return f'http://{host}:{port}'
 
-    # ── Health check ──────────────────────────────────────────────────────────
-
-    def _health_ok(self) -> bool:
-        """Return True if tvapp2 is reachable by doing a HEAD on /playlist."""
-        url = f'{self._base_url}/playlist'
-        try:
-            r = self.session.head(url, timeout=10)
-            return r.status_code < 400
-        except Exception as e:
-            logger.warning('[tvapp2] health check failed (%s): %s', url, e)
-            return False
-
     # ── M3U playlist fetch ────────────────────────────────────────────────────
 
     def _fetch_playlist(self) -> Optional[str]:
@@ -228,14 +216,9 @@ class TVApp2Scraper(BaseScraper):
     # ── BaseScraper interface ─────────────────────────────────────────────────
 
     def fetch_channels(self) -> list[ChannelData]:
-        if not self._health_ok():
-            logger.warning('[tvapp2] instance at %s appears unreachable; aborting scrape', self._base_url)
-            return []
-
         m3u_text = self._fetch_playlist()
         if not m3u_text:
             return []
-
         return self._parse_playlist(m3u_text)
 
     def fetch_epg(self, channels: list[ChannelData], **kwargs) -> list[ProgramData]:
