@@ -272,7 +272,10 @@ class _DiscTracker:
         return 0
 
     def check_and_evict(self, url: str, body: str) -> bool:
-        new_count = body.count("#EXT-X-DISCONTINUITY")
+        new_count = sum(
+            1 for line in body.splitlines()
+            if line.strip() == "#EXT-X-DISCONTINUITY"
+        )
         new_seq   = self._parse_disc_sequence(body)
         evict     = False
         with self._lock:
