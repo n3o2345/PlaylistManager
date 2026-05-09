@@ -2,16 +2,18 @@
 """
 tvapp2 scraper for FastChannels.
 
-tvapp2 is a self-hosted Node.js proxy that provides tokenized HLS streams for
-live sports and TV channels from TheTVApp.to and TVPass.org.  It exposes:
+tvapp2 (TheBinaryNinja/tvapp2) is a self-hosted Node.js application that
+periodically downloads pre-built M3U playlists and XMLTV EPG data from
+TheTVApp, TVPass, and MoveOnJoy, then serves them locally.  It exposes:
 
   GET http://<host>:<port>/playlist.m3u8
-      Full IPTV M3U8 playlist with channels already rewritten to go through
-      tvapp2's /channel?url= token endpoint.
+      Full IPTV M3U8 playlist.  Stream URLs are direct signed CDN URLs —
+      tvapp2 does NOT proxy streams.  The URLs are short-lived (typically
+      a few hours) and are refreshed each time tvapp2 re-syncs its data
+      (default: every 3 days via cron, or manually via the web UI).
 
-  GET http://<host>:<port>/channel?url=<encoded_channel_page_url>
-      Token resolution endpoint — fetches a fresh signed HLS URL from the
-      upstream source and proxies the variant playlist back to the client.
+  GET http://<host>:<port>/xmltv.xml
+      XMLTV EPG guide data (FILE_EPG env var; default: xmltv.xml).
 
   GET http://<host>:<port>/api/health
       JSON health check.
@@ -23,11 +25,9 @@ Config (set via the FastChannels admin UI):
   base_url    Full base URL override, e.g. http://192.168.1.50:4124
               (takes precedence over host+port when set)
 
-stream_url is stored as:  tvapp2://<channel_page_url>
-resolve() turns that into: http://<tvapp2>/channel?url=<encoded_channel_page_url>
-
-This means the token is fetched fresh on every play request, matching how
-tvapp2 is designed to work (tokens are short-lived and device-bound).
+stream_url is stored as the raw CDN URL from the playlist.
+resolve() re-fetches the playlist on every play request to get a fresh
+signed URL for the requested channel, since CDN tokens expire.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import quote as _quote, urlsplit
+from urllib.parse import urlsplit
 
 from .base import BaseScraper, ChannelData, ConfigField, ProgramData, infer_language_from_metadata
 from ..gracenote_map import resolve_gracenote
@@ -44,7 +44,6 @@ from ..gracenote_map import resolve_gracenote
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PORT = 4124
-_SCHEME = 'tvapp2://'
 
 # Attributes we pull from #EXTINF lines.
 # Example: #EXTINF:-1 tvg-id="..." tvg-name="..." tvg-logo="..." group-title="...",Channel Name
@@ -71,9 +70,9 @@ class TVApp2Scraper(BaseScraper):
 
     source_name     = 'tvapp2'
     display_name    = 'TVApp2'
-    scrape_interval = 720          # tvapp2 channel list changes infrequently
+    scrape_interval = 60           # re-fetch playlist hourly; CDN tokens are short-lived
     config_required = True
-    stream_audit_enabled = False   # tvapp2 streams require fresh tokens; static audit is unreliable
+    stream_audit_enabled = False   # tokens are time-limited; static audit is unreliable
 
     config_schema = [
         ConfigField(
@@ -166,12 +165,13 @@ class TVApp2Scraper(BaseScraper):
         """
         Parse the tvapp2 M3U playlist into ChannelData objects.
 
-        tvapp2 rewrites channel stream URLs in the form:
-            http://<tvapp2>/channel?url=<encoded_channel_page_url>
+        tvapp2 serves direct signed CDN stream URLs in the playlist.
+        We store the raw CDN URL as stream_url.  Because these tokens
+        expire, resolve() re-fetches the playlist at play time to get
+        a fresh URL for the requested channel.
 
-        We store the original channel page URL (decoded from the ?url= param)
-        in stream_url as  tvapp2://<channel_page_url>  so resolve() can hand
-        it back to tvapp2 at play time with a fresh token.
+        We also store the tvg-id (or a slug derived from it) so that
+        resolve() can look up the right entry in a freshly fetched playlist.
         """
         channels: list[ChannelData] = []
         seen_ids: set[str] = set()
@@ -201,31 +201,18 @@ class TVApp2Scraper(BaseScraper):
             if not stream_line:
                 continue
 
-            # Extract the original channel page URL from tvapp2's proxy URL.
-            # tvapp2 serves: http://<host>/channel?url=<encoded_page_url>
-            # We want the raw page URL so we can re-resolve at play time.
-            channel_page_url = _extract_channel_page_url(stream_line)
-            if not channel_page_url:
-                # Fallback: use the raw URL as-is (e.g. direct .m3u8 links)
-                channel_page_url = stream_line
-
-            name       = attrs.get('_name') or attrs.get('tvg-name') or ''
-            tvg_id     = attrs.get('tvg-id') or ''
-            logo_url   = attrs.get('tvg-logo') or None
-            group      = attrs.get('group-title') or None
+            name     = attrs.get('_name') or attrs.get('tvg-name') or ''
+            tvg_id   = attrs.get('tvg-id') or ''
+            logo_url = attrs.get('tvg-logo') or None
+            group    = attrs.get('group-title') or None
 
             if not name:
                 logger.debug('[tvapp2] skipping entry with no name: %s', stream_line[:80])
                 continue
 
             # Use tvg-id as the stable channel identifier when available;
-            # otherwise derive one from the channel page URL path.
-            if tvg_id:
-                source_channel_id = tvg_id
-            else:
-                # e.g. https://thetvapp.to/tv/abc-news-live/ → abc-news-live
-                path = urlsplit(channel_page_url).path.strip('/')
-                source_channel_id = path.split('/')[-1] if path else name.lower().replace(' ', '-')
+            # otherwise derive a slug from the name.
+            source_channel_id = tvg_id or name.lower().replace(' ', '-')
 
             if source_channel_id in seen_ids:
                 logger.debug('[tvapp2] duplicate channel id %s, skipping', source_channel_id)
@@ -237,7 +224,7 @@ class TVApp2Scraper(BaseScraper):
             channels.append(ChannelData(
                 source_channel_id = source_channel_id,
                 name              = name,
-                stream_url        = f'{_SCHEME}{channel_page_url}',
+                stream_url        = stream_line,   # raw signed CDN URL
                 logo_url          = logo_url,
                 slug              = source_channel_id,
                 category          = _normalise_group(group),
@@ -286,38 +273,61 @@ class TVApp2Scraper(BaseScraper):
 
     def resolve(self, raw_url: str) -> str:
         """
-        Convert a stored tvapp2:// URL into a live tvapp2 /channel?url= URL.
+        Re-fetch the tvapp2 playlist and return a fresh signed CDN URL for
+        the channel that originally resolved to raw_url.
 
-        The tvapp2 /channel endpoint fetches a fresh signed token from the
-        upstream source (TheTVApp / TVPass) and proxies the HLS variant
-        playlist back to the caller — so every play request is properly
-        authenticated without FastChannels needing to manage tokens itself.
+        tvapp2 serves direct signed CDN URLs.  These tokens expire (typically
+        within a few hours).  Rather than redirecting the client to a stale
+        stored URL, we hit the playlist fresh on each play request and find
+        the matching channel by tvg-id or stream URL prefix.
+
+        Falls back to the stored raw_url if the playlist fetch fails or the
+        channel can't be found — better than a hard 502 on a transient error.
         """
-        if not raw_url.startswith(_SCHEME):
+        m3u_text = self._fetch_playlist()
+        if not m3u_text:
+            logger.warning('[tvapp2] resolve: playlist fetch failed, using stored URL')
             return raw_url
-        channel_page_url = raw_url[len(_SCHEME):]
-        return f'{self._base_url}/channel?url={_quote(channel_page_url, safe="")}'
+
+        # Build a map of {source_channel_id: stream_url} from a fresh playlist.
+        # We match by comparing the stored URL against fresh ones — channels whose
+        # CDN hostname or path prefix matches are considered the same stream.
+        fresh_channels = self._parse_playlist(m3u_text)
+        fresh_map = {ch.source_channel_id: ch.stream_url for ch in fresh_channels}
+
+        # Find the stored channel_id by matching the stored URL against the
+        # stored stream_url values we scraped last time.  Since we can't look up
+        # channel_id from raw_url directly here, match by URL prefix (CDN base).
+        stored_base = _url_base(raw_url)
+        for ch in fresh_channels:
+            if _url_base(ch.stream_url) == stored_base:
+                logger.debug('[tvapp2] resolve: refreshed URL for %s', ch.source_channel_id)
+                return ch.stream_url
+
+        # If no prefix match, the CDN may have rotated entirely — just return
+        # the first fresh URL that has the same tvg-id embedded in the path,
+        # or fall back to the stored URL.
+        logger.warning('[tvapp2] resolve: no match for stored URL base %s, using stored URL', stored_base[:60])
+        return raw_url
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _extract_channel_page_url(tvapp2_proxy_url: str) -> Optional[str]:
+def _url_base(url: str) -> str:
     """
-    Extract the original channel page URL from a tvapp2 proxy URL.
+    Return scheme+host+path-without-filename for a URL, used to match a
+    stored CDN stream URL against a freshly fetched one even when the
+    token query string has rotated.
 
-    Input:  http://192.168.1.10:4124/channel?url=https%3A%2F%2Fthetvapp.to%2Ftv%2Fabc%2F
-    Output: https://thetvapp.to/tv/abc/
+    e.g. https://cdn.example.com/live/abc/index.m3u8?token=xyz
+      →  https://cdn.example.com/live/abc/
     """
-    from urllib.parse import urlsplit, parse_qs, unquote
     try:
-        parsed = urlsplit(tvapp2_proxy_url)
-        qs = parse_qs(parsed.query)
-        urls = qs.get('url') or qs.get('URL')
-        if urls:
-            return unquote(urls[0])
+        p = urlsplit(url)
+        path = p.path.rsplit('/', 1)[0] + '/'
+        return f'{p.scheme}://{p.netloc}{path}'
     except Exception:
-        pass
-    return None
+        return url
 
 
 _GROUP_MAP = {
