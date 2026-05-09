@@ -39,7 +39,7 @@ if [ "${TVAPP2_ENABLED:-1}" = "1" ]; then
     (
         cd /opt/tvapp2
         while true; do
-            WEB_IP=127.0.0.1 \
+            WEB_IP=0.0.0.0 \
             WEB_PORT="${TVAPP2_PORT:-4124}" \
             STREAM_QUALITY="${TVAPP2_STREAM_QUALITY:-hd}" \
             LOG_LEVEL="${TVAPP2_LOG_LEVEL:-2}" \
