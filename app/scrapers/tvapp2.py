@@ -222,7 +222,7 @@ class TVApp2Scraper(BaseScraper):
             channels.append(ChannelData(
                 source_channel_id = source_channel_id,
                 name              = name,
-                stream_url        = stream_line,
+                stream_url        = _unwrap_channel_url(stream_line),
                 logo_url          = logo_url,
                 slug              = source_channel_id,
                 category          = _normalise_group(group),
@@ -356,7 +356,30 @@ def _extract_gracenote_id(tvg_id: str) -> str | None:
     return None
 
 
-_GROUP_MAP = {
+def _unwrap_channel_url(url: str) -> str:
+    """
+    If the URL is a tvapp2 /channel?url=<encoded> proxy URL, extract and return
+    the inner upstream URL.  Otherwise return the URL unchanged.
+
+    tvapp2's own playlist serves stream lines as:
+        http://127.0.0.1:4124/channel?url=https%3A%2F%2Fthetvapp.to%2F...
+    We store only the raw upstream URL so resolve() can re-wrap it against
+    whatever base_url is configured, avoiding double-wrapping on re-scrapes.
+    """
+    from urllib.parse import urlsplit, parse_qs, unquote
+    try:
+        parsed = urlsplit(url)
+        if parsed.path == '/channel':
+            qs = parse_qs(parsed.query)
+            inner = qs.get('url', [None])[0]
+            if inner:
+                return unquote(inner)
+    except Exception:
+        pass
+    return url
+
+
+
     'sports':         'Sports',
     'sport':          'Sports',
     'news':           'News',
