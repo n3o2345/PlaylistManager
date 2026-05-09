@@ -468,7 +468,6 @@ def _is_safe_upstream_url(url: str) -> bool:
 
 def _fetch_manifest(url: str, session) -> _requests.Response:
     if not _is_safe_upstream_url(url):
-        logger.warning('[manifest-proxy] blocked unsafe URL scheme/host: %r (first 150 chars)', url[:150])
         abort(400)
     try:
         r = session.get(url, timeout=10)
@@ -572,7 +571,6 @@ def hls_manifest_proxy(source_name: str, channel_id: str):
     if not master_url or not master_url.startswith(('http://', 'https://')):
         abort(502)
 
-    logger.info('[%s-proxy] fetching master manifest: %s', source_name, master_url[:80])
     master_r = _fetch_manifest(master_url, session)
     effective_master_url = master_r.url
     text = master_r.text

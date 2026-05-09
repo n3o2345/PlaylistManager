@@ -319,26 +319,12 @@ class TVApp2Scraper(BaseScraper):
 
     def resolve(self, raw_url: str) -> str:
         """
-        Return the tvapp2 stream URL, rewriting any loopback host to the
-        configured tvapp2 host so IPTV clients on the LAN can reach it.
+        Return the CDN stream URL as-is.
 
-        tvapp2 proxies CDN streams through itself (e.g.
-        http://127.0.0.1:4124/channel?url=...) so it can inject the right
-        CDN headers.  When FastChannels runs on the same host as tvapp2, those
-        URLs contain 127.0.0.1 or localhost — unreachable from other LAN
-        devices.  We rewrite the host to the configured tvapp2 address so the
-        302 redirect lands somewhere the client can actually connect to.
+        tvapp2 serves pre-fetched direct CDN stream URLs in /playlist.
+        The client hits the CDN directly — no proxy or token reconstruction needed.
+        FastChannels just 302-redirects to whatever URL tvapp2 stored.
         """
-        if not raw_url:
-            return raw_url
-        parsed = urlsplit(raw_url)
-        netloc = parsed.netloc          # e.g. "127.0.0.1:4124"
-        host_part = netloc.split(':')[0].lower()
-        if host_part in ('127.0.0.1', 'localhost', '0.0.0.0', '::1'):
-            configured_base = urlsplit(self._base_url)
-            new_netloc = configured_base.netloc   # e.g. "192.168.1.10:4124"
-            if new_netloc and new_netloc != netloc:
-                raw_url = raw_url.replace(netloc, new_netloc, 1)
         return raw_url
 
 
