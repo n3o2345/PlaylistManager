@@ -24,8 +24,11 @@ Config (set via the FastChannels admin UI):
   base_url    Full base URL override, e.g. http://192.168.1.50:4124
               (takes precedence over host+port when set)
 
-stream_url is stored as the raw CDN URL from the playlist.
-resolve() returns it unchanged — tvapp2 handles its own token lifecycle.
+stream_url is stored as the raw CDN/source URL from the playlist.
+resolve() wraps it through tvapp2's /channel?url= proxy endpoint so that
+all playback requests are served by tvapp2 rather than sent directly to the
+CDN.  This keeps the request origin consistent with tvapp2's own session and
+avoids IP- or token-bound CDN URLs being handed to external IPTV clients.
 """
 from __future__ import annotations
 
@@ -70,7 +73,7 @@ class TVApp2Scraper(BaseScraper):
     display_name    = 'TVApp2'
     scrape_interval = 360          # re-sync every 6h; tvapp2 refreshes on its own cron (default 3 days)
     config_required = True
-    stream_audit_enabled = False   # CDN URLs are time-limited; static audit will false-positive
+    stream_audit_enabled = False   # resolved URLs go through tvapp2 proxy; audit hits server not CDN
 
     config_schema = [
         ConfigField(
@@ -319,13 +322,19 @@ class TVApp2Scraper(BaseScraper):
 
     def resolve(self, raw_url: str) -> str:
         """
-        Return the CDN stream URL as-is.
+        Proxy the stream through tvapp2's /channel endpoint.
 
-        tvapp2 serves pre-fetched direct CDN stream URLs in /playlist.
-        The client hits the CDN directly — no proxy or token reconstruction needed.
-        FastChannels just 302-redirects to whatever URL tvapp2 stored.
+        tvapp2 exposes GET /channel?url=<encoded_stream_url> which fetches and
+        re-serves the HLS stream on behalf of the client.  Routing playback
+        through this endpoint keeps all requests server-side (same IP / session
+        context as the original playlist fetch) and avoids clients hitting CDN
+        URLs that may be IP- or token-bound.
+
+        Example resolved URL:
+            http://192.168.1.10:4124/channel?url=https%3A%2F%2Fthetvapp.to%2F...
         """
-        return raw_url
+        from urllib.parse import quote as _quote
+        return f'{self._base_url}/channel?url={_quote(raw_url, safe="")}'
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
