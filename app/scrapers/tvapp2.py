@@ -6,17 +6,16 @@ tvapp2 (TheBinaryNinja/tvapp2) is a self-hosted Node.js application that
 periodically downloads pre-built M3U playlists and XMLTV EPG data from
 TheTVApp, TVPass, and MoveOnJoy, then serves them locally.  It exposes:
 
-  GET http://<host>:<port>/playlist.m3u8
-      Full IPTV M3U8 playlist.  Stream URLs are direct signed CDN URLs —
-      tvapp2 does NOT proxy streams.  The URLs are short-lived (typically
-      a few hours) and are refreshed each time tvapp2 re-syncs its data
-      (default: every 3 days via cron, or manually via the web UI).
+  GET http://<host>:<port>/playlist
+      Full IPTV M3U playlist.  Stream URLs are direct playable CDN URLs.
+      tvapp2 does NOT proxy streams — URLs are refreshed on its own sync
+      schedule (default: every 3 days, configurable via TASK_CRON_SYNC).
 
-  GET http://<host>:<port>/xmltv.xml
-      XMLTV EPG guide data (FILE_EPG env var; default: xmltv.xml).
+  GET http://<host>:<port>/epg
+      XMLTV EPG guide data (uncompressed XML).
 
-  GET http://<host>:<port>/api/health
-      JSON health check.
+  GET http://<host>:<port>/gzip
+      XMLTV EPG guide data (gzip-compressed — faster to fetch).
 
 Config (set via the FastChannels admin UI):
   host        tvapp2 host (default: localhost)
@@ -26,8 +25,7 @@ Config (set via the FastChannels admin UI):
               (takes precedence over host+port when set)
 
 stream_url is stored as the raw CDN URL from the playlist.
-resolve() re-fetches the playlist on every play request to get a fresh
-signed URL for the requested channel, since CDN tokens expire.
+resolve() returns it unchanged — tvapp2 handles its own token lifecycle.
 """
 from __future__ import annotations
 
@@ -70,9 +68,9 @@ class TVApp2Scraper(BaseScraper):
 
     source_name     = 'tvapp2'
     display_name    = 'TVApp2'
-    scrape_interval = 720          # channel list changes infrequently; tokens are live via /channel?url=
+    scrape_interval = 360          # re-sync every 6h; tvapp2 refreshes on its own cron (default 3 days)
     config_required = True
-    stream_audit_enabled = False   # tokens are fetched fresh by tvapp2 on each play; static audit unreliable
+    stream_audit_enabled = False   # CDN URLs are time-limited; static audit will false-positive
 
     config_schema = [
         ConfigField(
@@ -138,11 +136,11 @@ class TVApp2Scraper(BaseScraper):
     # ── Health check ──────────────────────────────────────────────────────────
 
     def _health_ok(self) -> bool:
-        """Return True if the tvapp2 health endpoint responds 200."""
-        url = f'{self._base_url}/api/health'
+        """Return True if tvapp2 is reachable by doing a HEAD on /playlist."""
+        url = f'{self._base_url}/playlist'
         try:
-            r = self.session.get(url, timeout=10)
-            return r.status_code == 200
+            r = self.session.head(url, timeout=10)
+            return r.status_code < 400
         except Exception as e:
             logger.warning('[tvapp2] health check failed (%s): %s', url, e)
             return False
@@ -150,7 +148,7 @@ class TVApp2Scraper(BaseScraper):
     # ── M3U playlist fetch ────────────────────────────────────────────────────
 
     def _fetch_playlist(self) -> Optional[str]:
-        url = f'{self._base_url}/playlist.m3u8'
+        url = f'{self._base_url}/playlist'
         try:
             r = self.session.get(url, timeout=30)
             r.raise_for_status()
@@ -242,16 +240,14 @@ class TVApp2Scraper(BaseScraper):
 
     def fetch_epg(self, channels: list[ChannelData], **kwargs) -> list[ProgramData]:
         """
-        Fetch EPG from tvapp2's built-in XMLTV endpoint (GET /xmltv.xml).
+        Fetch EPG from tvapp2's /epg endpoint (uncompressed XMLTV).
 
-        tvapp2 hosts its own guide data — the same data it used to build the
-        M3U playlist — at /xmltv.xml (configurable via FILE_EPG env var in
-        tvapp2, but /xmltv.xml is the default).  Channel IDs in the XMLTV file
-        match the tvg-id values in the M3U, which we store as source_channel_id.
+        Channel IDs in the XMLTV match the tvg-id values in /playlist,
+        which we store as source_channel_id — so linkage is automatic.
         """
-        url = f'{self._base_url}/xmltv.xml'
+        url = f'{self._base_url}/epg'
         try:
-            r = self.session.get(url, timeout=60)
+            r = self.session.get(url, timeout=120)
             r.raise_for_status()
             xml_text = r.text
         except Exception as e:
