@@ -24,11 +24,8 @@ Config (set via the FastChannels admin UI):
   base_url    Full base URL override, e.g. http://192.168.1.50:4124
               (takes precedence over host+port when set)
 
-stream_url is stored as the raw CDN/source URL from the playlist.
-resolve() wraps it through tvapp2's /channel?url= proxy endpoint so that
-all playback requests are served by tvapp2 rather than sent directly to the
-CDN.  This keeps the request origin consistent with tvapp2's own session and
-avoids IP- or token-bound CDN URLs being handed to external IPTV clients.
+stream_url is stored as the raw CDN URL from the playlist.
+resolve() returns it unchanged — tvapp2 handles its own token lifecycle.
 """
 from __future__ import annotations
 
@@ -73,7 +70,7 @@ class TVApp2Scraper(BaseScraper):
     display_name    = 'TVApp2'
     scrape_interval = 360          # re-sync every 6h; tvapp2 refreshes on its own cron (default 3 days)
     config_required = True
-    stream_audit_enabled = False   # resolved URLs go through tvapp2 proxy; audit hits server not CDN
+    stream_audit_enabled = False   # CDN URLs are time-limited; static audit will false-positive
 
     config_schema = [
         ConfigField(
@@ -91,9 +88,9 @@ class TVApp2Scraper(BaseScraper):
             key='host',
             label='tvapp2 Host',
             field_type='text',
-            default='127.0.0.1',
-            placeholder='127.0.0.1',
-            help_text='Hostname or IP of the tvapp2 server. For the embedded instance use 127.0.0.1. Ignored when Base URL is set.',
+            default='localhost',
+            placeholder='localhost',
+            help_text='Hostname or IP of the tvapp2 server. Ignored when Base URL is set.',
         ),
         ConfigField(
             key='port',
@@ -129,7 +126,7 @@ class TVApp2Scraper(BaseScraper):
         explicit = (self.config.get('base_url') or '').strip().rstrip('/')
         if explicit:
             return explicit
-        host = (self.config.get('host') or '127.0.0.1').strip()
+        host = (self.config.get('host') or 'localhost').strip()
         try:
             port = int(self.config.get('port') or _DEFAULT_PORT)
         except (ValueError, TypeError):
@@ -222,7 +219,7 @@ class TVApp2Scraper(BaseScraper):
             channels.append(ChannelData(
                 source_channel_id = source_channel_id,
                 name              = name,
-                stream_url        = _unwrap_channel_url(stream_line),
+                stream_url        = self._unwrap_channel_url(stream_line),
                 logo_url          = logo_url,
                 slug              = source_channel_id,
                 category          = _normalise_group(group),
@@ -322,18 +319,32 @@ class TVApp2Scraper(BaseScraper):
 
     def resolve(self, raw_url: str) -> str:
         """
-        Build the tvapp2 /channel proxy URL for this stream.
+        Return the raw upstream URL as-is.
 
-        tvapp2 exposes GET /channel?url=<encoded_stream_url> which fetches and
-        re-serves the HLS stream, handling any auth/token negotiation needed to
-        reach the upstream CDN.  FastChannels fetches this URL server-side and
-        pipes it to the client via its own manifest proxy — the client never
-        sees or connects to the tvapp2 address directly.
-
-        Example: http://127.0.0.1:4124/channel?url=https%3A%2F%2Fthetvapp.to%2F...
+        FastChannels proxies tvapp2 streams server-side via the tvapp2_manifest_proxy
+        route in play.py — resolve() is not used for the proxy path, but must return
+        a valid http URL so the play() handler doesn't abort before routing to the
+        proxy.  raw_url here is the unwrapped CDN/source URL stored at scrape time.
         """
-        from urllib.parse import quote as _quote
-        return f'{self._base_url}/channel?url={_quote(raw_url, safe="")}'
+        return raw_url
+
+    def _unwrap_channel_url(self, url: str) -> str:
+        """
+        tvapp2\'s own playlist serves stream lines as:
+            http://127.0.0.1:4124/channel?url=https%3A%2F%2Fthetvapp.to%2F...
+        Extract the inner raw URL so we store what the stream actually is,
+        not a tvapp2-specific proxy URL that changes with host/port config.
+        """
+        from urllib.parse import urlsplit, parse_qs, unquote as _unquote
+        try:
+            parsed = urlsplit(url)
+            if parsed.path == '/channel':
+                inner = parse_qs(parsed.query).get('url', [None])[0]
+                if inner:
+                    return _unquote(inner)
+        except Exception:
+            pass
+        return url
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -354,29 +365,6 @@ def _extract_gracenote_id(tvg_id: str) -> str | None:
     if prefix.isdigit() and len(prefix) >= 5:
         return prefix
     return None
-
-
-def _unwrap_channel_url(url: str) -> str:
-    """
-    If the URL is a tvapp2 /channel?url=<encoded> proxy URL, extract and return
-    the inner upstream URL.  Otherwise return the URL unchanged.
-
-    tvapp2's own playlist serves stream lines as:
-        http://127.0.0.1:4124/channel?url=https%3A%2F%2Fthetvapp.to%2F...
-    We store only the raw upstream URL so resolve() can re-wrap it against
-    whatever base_url is configured, avoiding double-wrapping on re-scrapes.
-    """
-    from urllib.parse import urlsplit, parse_qs, unquote
-    try:
-        parsed = urlsplit(url)
-        if parsed.path == '/channel':
-            qs = parse_qs(parsed.query)
-            inner = qs.get('url', [None])[0]
-            if inner:
-                return unquote(inner)
-    except Exception:
-        pass
-    return url
 
 
 _GROUP_MAP = {

@@ -549,22 +549,44 @@ def _make_pluto_seg_proxy_fn(source_name: str):
     return _proxy
 
 
-@play_bp.route('/play/tvapp2/<channel_id>/proxy.m3u8')
-def tvapp2_manifest_proxy(channel_id: str):
-    """
-    Manifest proxy for tvapp2 channels.
-
-    tvapp2 is embedded in the same container and listens on localhost:4124.
-    Its /channel?url= endpoint fetches the upstream HLS stream and re-serves it,
-    handling any auth/session the CDN requires.
-
-    Dispatcharr (and all other clients) receive a FastChannels URL so they never
-    need to reach 127.0.0.1 themselves — FastChannels fetches from tvapp2 and
-    pipes the manifest through, rewriting segment and variant URLs to be absolute
-    so the client can fetch segments directly from the CDN.
-    """
-    from urllib.parse import unquote as _unquote, quote as _quote, urljoin as _urljoin
+def _tvapp2_base_url(channel) -> str:
     from ..scrapers.tvapp2 import TVApp2Scraper
+    return TVApp2Scraper(config=channel.source.config or {})._base_url
+
+
+@play_bp.route('/play/tvapp2/segment')
+def tvapp2_segment_proxy():
+    """Fetch a TS segment via tvapp2 and stream bytes to the client."""
+    raw = request.args.get('url', '')
+    if not raw:
+        abort(400)
+    url = _unquote(raw)
+    if not url.startswith(('http://', 'https://')):
+        abort(400)
+    try:
+        r = _requests.get(url, timeout=20, stream=True)
+        if r.status_code != 200:
+            abort(r.status_code)
+        return Response(
+            r.iter_content(65536),
+            status=200,
+            content_type=r.headers.get('Content-Type', 'video/MP2T'),
+            headers={'Cache-Control': 'no-cache'},
+        )
+    except Exception as e:
+        logger.warning('[tvapp2-seg] fetch failed: %s', e)
+        abort(502)
+
+
+@play_bp.route('/play/tvapp2/<channel_id>/variant.m3u8')
+def tvapp2_variant_proxy(channel_id: str):
+    """Fetch a variant playlist from tvapp2 and rewrite segment URLs through FastChannels."""
+    raw_url = request.args.get('url', '')
+    if not raw_url:
+        abort(400)
+    variant_url = _unquote(raw_url)
+    if not variant_url.startswith(('http://', 'https://')):
+        abort(400)
 
     channel = (
         Channel.query
@@ -572,88 +594,14 @@ def tvapp2_manifest_proxy(channel_id: str):
         .filter(Source.name == 'tvapp2', Channel.source_channel_id == _unquote(channel_id))
         .first_or_404()
     )
-
-    scraper = TVApp2Scraper(config=channel.source.config or {})
-    tvapp2_url = scraper.resolve(channel.stream_url)
-
-    # Fetch the master/variant playlist from the local tvapp2 instance.
-    # We allow http://127.0.0.1 here intentionally — tvapp2 is embedded.
-    try:
-        r = _requests.get(tvapp2_url, timeout=15, allow_redirects=True)
-        r.raise_for_status()
-    except Exception as e:
-        logger.warning('[tvapp2-proxy] fetch failed for channel %s: %s', channel_id, e)
-        abort(502)
-
-    text = r.text
-    effective_url = r.url   # final URL after any tvapp2-internal redirects
-    base_fc = request.host_url.rstrip('/')
-
-    # If tvapp2 returned a master playlist (multiple quality variants), rewrite
-    # each variant line to loop back through this proxy so FastChannels stays
-    # in the path for every subsequent manifest refresh.
-    if '#EXT-X-STREAM-INF' in text:
-        lines = []
-        for line in text.splitlines():
-            stripped = line.strip()
-            if stripped and not stripped.startswith('#'):
-                # Variant URL — could be relative or absolute.
-                # Make it absolute relative to the effective tvapp2 URL,
-                # then wrap it so FastChannels fetches it on behalf of the client.
-                abs_variant = _urljoin(effective_url, stripped)
-                encoded = _quote(abs_variant, safe='')
-                line = f'{base_fc}/play/tvapp2/{_quote(channel.source_channel_id, safe="")}/variant.m3u8?url={encoded}'
-            lines.append(line)
-        return Response(
-            '\n'.join(lines),
-            mimetype='application/vnd.apple.mpegurl',
-            headers=_manifest_cache_headers(),
-        )
-
-    # Media playlist — rewrite segment URLs to be absolute so the client can
-    # fetch them directly from the CDN (segments are publicly accessible).
-    lines = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith('#'):
-            line = _urljoin(effective_url, stripped)
-        elif stripped.startswith('#') and 'URI="' in stripped:
-            line = _rewrite_uri_attrs(line, effective_url)
-        lines.append(line)
-
-    return Response(
-        '\n'.join(lines),
-        mimetype='application/vnd.apple.mpegurl',
-        headers=_manifest_cache_headers(),
-    )
-
-
-@play_bp.route('/play/tvapp2/<channel_id>/variant.m3u8')
-def tvapp2_variant_proxy(channel_id: str):
-    """
-    Proxy a tvapp2 variant (media) playlist fetched from the local tvapp2 instance.
-
-    The master proxy rewrites variant URLs to come here so FastChannels stays
-    in the loop for each quality-level manifest refresh.  Segment URLs inside
-    the variant are made absolute so the client fetches them directly from CDN.
-    """
-    from urllib.parse import unquote as _unquote, urljoin as _urljoin
-
-    raw_url = request.args.get('url', '')
-    if not raw_url:
-        abort(400)
-    url = _unquote(raw_url)
-
-    # Only allow fetching from tvapp2's own address or the CDN it proxies to.
-    # We allow http here because tvapp2 is local.
-    if not url.startswith(('http://', 'https://')):
-        abort(400)
+    tvapp2_base = _tvapp2_base_url(channel)
+    fc_base = request.host_url.rstrip('/')
 
     try:
-        r = _requests.get(url, timeout=15, allow_redirects=True)
+        r = _requests.get(variant_url, timeout=15, allow_redirects=True)
         r.raise_for_status()
     except Exception as e:
-        logger.warning('[tvapp2-variant] fetch failed for %s: %s', url[:80], e)
+        logger.warning('[tvapp2-variant] fetch failed for %s: %s', variant_url[:80], e)
         abort(502)
 
     effective_url = r.url
@@ -661,7 +609,9 @@ def tvapp2_variant_proxy(channel_id: str):
     for line in r.text.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith('#'):
-            line = _urljoin(effective_url, stripped)
+            abs_seg = urljoin(effective_url, stripped)
+            proxied = f'{tvapp2_base}/channel?url={_quote(abs_seg, safe="")}'
+            line = f'{fc_base}/play/tvapp2/segment?url={_quote(proxied, safe="")}'
         elif stripped.startswith('#') and 'URI="' in stripped:
             line = _rewrite_uri_attrs(line, effective_url)
         lines.append(line)
@@ -673,7 +623,71 @@ def tvapp2_variant_proxy(channel_id: str):
     )
 
 
+@play_bp.route('/play/tvapp2/<channel_id>/proxy.m3u8')
+def tvapp2_manifest_proxy(channel_id: str):
+    """
+    Full proxy for tvapp2 channels. Chain:
+      client -> FastChannels /proxy.m3u8
+             -> tvapp2 /channel?url=<raw_stream_url>  (master playlist)
+             -> FastChannels /variant.m3u8
+             -> tvapp2 /channel?url=<variant_url>     (variant playlist)
+             -> FastChannels /segment
+             -> tvapp2 /channel?url=<seg_url>         (TS bytes)
+             -> client
+    Nothing hits the CDN directly from the client.
+    """
+    channel = (
+        Channel.query
+        .join(Source)
+        .filter(Source.name == 'tvapp2', Channel.source_channel_id == _unquote(channel_id))
+        .first_or_404()
+    )
 
+    tvapp2_base = _tvapp2_base_url(channel)
+    tvapp2_url = f'{tvapp2_base}/channel?url={_quote(channel.stream_url, safe="")}'
+    fc_base = request.host_url.rstrip('/')
+    encoded_id = _quote(channel.source_channel_id, safe='')
+
+    try:
+        r = _requests.get(tvapp2_url, timeout=15, allow_redirects=True)
+        r.raise_for_status()
+    except Exception as e:
+        logger.warning('[tvapp2-proxy] fetch failed for %s: %s', channel_id, e)
+        abort(502)
+
+    text = r.text
+    effective_url = r.url
+
+    if '#EXT-X-STREAM-INF' in text:
+        lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith('#'):
+                abs_variant = urljoin(effective_url, stripped)
+                line = (f'{fc_base}/play/tvapp2/{encoded_id}/variant.m3u8'
+                        f'?url={_quote(abs_variant, safe="")}')
+            elif stripped.startswith('#') and 'URI="' in stripped:
+                line = _rewrite_uri_attrs(line, effective_url)
+            lines.append(line)
+        return Response('\n'.join(lines), mimetype='application/vnd.apple.mpegurl',
+                        headers=_manifest_cache_headers())
+
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith('#'):
+            abs_seg = urljoin(effective_url, stripped)
+            proxied = f'{tvapp2_base}/channel?url={_quote(abs_seg, safe="")}'
+            line = f'{fc_base}/play/tvapp2/segment?url={_quote(proxied, safe="")}'
+        elif stripped.startswith('#') and 'URI="' in stripped:
+            line = _rewrite_uri_attrs(line, effective_url)
+        lines.append(line)
+    return Response('\n'.join(lines), mimetype='application/vnd.apple.mpegurl',
+                    headers=_manifest_cache_headers())
+
+
+@play_bp.route('/play/<source_name>/<channel_id>/proxy.m3u8')
+def hls_manifest_proxy(source_name: str, channel_id: str):
     """
     Stable manifest proxy for providers whose playback URLs are short-lived.
 
