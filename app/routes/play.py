@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 play_bp = Blueprint('play', __name__)
 
-_MANIFEST_PROXY_SOURCES = {'pluto', 'localnow'}
+_MANIFEST_PROXY_SOURCES = {'pluto', 'localnow', 'tvapp2'}
 
 # Pluto SSAI CDN hosts whose segment URLs contain short-lived signed tokens.
 # During ad-break transitions Pluto's stitcher rotates these tokens, so any
@@ -456,6 +456,11 @@ def _resolve_manifest_source(channel: Channel, source_name: str):
     resolved_url = resolver(channel.stream_url)
     if scraper._pending_config_updates:
         persist_source_config_updates(channel.source_id, scraper._pending_config_updates)
+    # Let the scraper inject CDN-specific headers (e.g. Origin/Referer for tvapp2
+    # CDNs that gate access on those headers) into the session before we use it
+    # to fetch manifests.
+    if hasattr(scraper, '_inject_cdn_headers') and resolved_url:
+        scraper._inject_cdn_headers(resolved_url)
     return resolved_url, scraper.session
 
 

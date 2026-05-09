@@ -86,6 +86,13 @@ _CDN_HEADERS: List[Tuple[str, dict]] = [
     ("stirr",         {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}),
     ("distrotv",      {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}),
     ("lgchannels",    {"User-Agent": "Mozilla/5.0 (SmartTV; Linux) AppleWebKit/537.36"}),
+    # tvapp2 upstream CDN hosts (TheTVApp, TVPass, MoveOnJoy)
+    ("thetvapp",      {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                       "Origin": "https://thetvapp.to", "Referer": "https://thetvapp.to/"}),
+    ("tvpass",        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                       "Origin": "https://tvpass.org", "Referer": "https://tvpass.org/"}),
+    ("moveonjoy",     {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                       "Origin": "https://moveonjoy.com", "Referer": "https://moveonjoy.com/"}),
 ]
 
 PLUTO_MARKERS = ("pluto.tv", "plutotv", "stitcher.pluto", "jmpromo")

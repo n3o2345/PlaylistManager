@@ -327,6 +327,30 @@ class TVApp2Scraper(BaseScraper):
         """
         return raw_url
 
+    def _inject_cdn_headers(self, url: str) -> None:
+        """
+        Inject Origin/Referer headers into the scraper session appropriate for
+        the CDN serving this tvapp2 stream URL.  Called by the manifest proxy
+        path so _fetch_manifest() sends the right headers when fetching the
+        HLS master playlist from TheTVApp, TVPass, or MoveOnJoy CDNs.
+        """
+        u = url.lower()
+        if 'thetvapp' in u:
+            self.session.headers.update({
+                'Origin': 'https://thetvapp.to',
+                'Referer': 'https://thetvapp.to/',
+            })
+        elif 'tvpass' in u:
+            self.session.headers.update({
+                'Origin': 'https://tvpass.org',
+                'Referer': 'https://tvpass.org/',
+            })
+        elif 'moveonjoy' in u:
+            self.session.headers.update({
+                'Origin': 'https://moveonjoy.com',
+                'Referer': 'https://moveonjoy.com/',
+            })
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
