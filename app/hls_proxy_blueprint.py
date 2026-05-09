@@ -489,10 +489,11 @@ def _rewrite_m3u8(body: str, base_url: str, variant_url: str) -> str:
             line = re.sub(r'URI="([^"]+)"', rewrite_uri, line)
             out.append(line)
 
-        elif s.startswith("#EXT-X-MEDIA") and 'URI="' in s and (
-                'Audio-Description' in s or 'Audio Description' in s):
-            # Strip Pluto's Audio Description rendition — it causes corrupt
-            # packet errors at every ad boundary due to SSAI DTS resets.
+        elif s.startswith("#EXT-X-MEDIA") and 'URI="' in s and _is_pluto(variant_url):
+            # Strip all supplementary renditions from Pluto master playlists
+            # (Audio Description, subtitles, WebVTT, etc.).  These alternate
+            # tracks carry independent DTS timelines that reset at every SSAI
+            # ad boundary, producing corrupt-packet errors and visible freezes.
             i += 1
             continue
 
