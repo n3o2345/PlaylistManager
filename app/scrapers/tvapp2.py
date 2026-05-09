@@ -379,7 +379,7 @@ def _unwrap_channel_url(url: str) -> str:
     return url
 
 
-
+_GROUP_MAP = {
     'sports':         'Sports',
     'sport':          'Sports',
     'news':           'News',
