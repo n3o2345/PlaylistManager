@@ -319,18 +319,12 @@ class TVApp2Scraper(BaseScraper):
 
     def resolve(self, raw_url: str) -> str:
         """
-        Return a playable URL for this channel.
+        Return the CDN stream URL as-is.
 
-        FastChannels proxies tvapp2 streams internally (tvapp2 is in
-        _MANIFEST_PROXY_SOURCES), so the URL only needs to be reachable
-        from inside the container — 127.0.0.1:4124 is fine.
-
-        Legacy tvapp2:// entries: reconstruct the /channel?url= proxy URL.
+        tvapp2 serves pre-fetched direct CDN stream URLs in /playlist.
+        The client hits the CDN directly — no proxy or token reconstruction needed.
+        FastChannels just 302-redirects to whatever URL tvapp2 stored.
         """
-        if raw_url.startswith('tvapp2://'):
-            from urllib.parse import quote as _quote
-            page_url = raw_url[len('tvapp2://'):]
-            return f'{self._base_url}/channel?url={_quote(page_url, safe="")}'
         return raw_url
 
 
