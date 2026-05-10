@@ -16,6 +16,7 @@ import requests as _requests
 
 from flask import Blueprint, redirect, abort, request, Response
 from app.config_store import persist_source_config_updates
+from .ts_stitcher import stitch_segment
 from ..extensions import db
 from ..hls import inspect_hls_drm
 from ..models import Channel, Source
@@ -264,6 +265,13 @@ def pluto_segment_proxy():
     in the ?url= query parameter and may be updated by the variant proxy on
     each manifest refresh — so the client sees a consistent URL while the
     upstream CDN address stays current.
+
+    The optional ?ch= parameter carries the channel ID so we can apply
+    per-channel MPEG-TS timestamp stitching.  At each SSAI ad/content boundary
+    Pluto's ad segments reset their DTS timeline to near-zero; without stitching
+    the output MPEG-TS has huge PCR/PTS/DTS jumps that cause downstream players
+    to show a black screen.  We buffer the full segment, rewrite every timestamp
+    to be continuous with the previous segment, then return the modified bytes.
     """
     raw = request.args.get('url', '')
     if not raw:
@@ -275,17 +283,26 @@ def pluto_segment_proxy():
     if _PRIVATE_IP_RE.match(parsed.netloc.split(':')[0]):
         logger.warning('[pluto-seg-proxy] blocked SSRF attempt to: %s', parsed.netloc)
         abort(403)
+
+    channel_id = request.args.get('ch', '')
+
     try:
-        r = _requests.get(url, headers=_PLUTO_SEG_HEADERS, timeout=15, stream=True)
+        r = _requests.get(url, headers=_PLUTO_SEG_HEADERS, timeout=15)
         if r.status_code == 403:
-            # Token may have just rotated — log for diagnostics; client will retry
-            # via the next variant refresh which will supply a new signed URL.
             logger.debug('[pluto-seg-proxy] 403 on segment (token likely rotated): %s', url[:100])
             abort(403)
         if r.status_code != 200:
             abort(r.status_code)
+
+        data = r.content
+
+        # Rewrite PCR/PTS/DTS to be continuous across SSAI ad/content boundaries.
+        # stitch_segment is a no-op when channel_id is empty or offset is zero.
+        if channel_id:
+            data = stitch_segment(channel_id, data)
+
         return Response(
-            r.iter_content(65536),
+            data,
             status=200,
             content_type=r.headers.get('Content-Type', 'video/MP2T'),
             headers={'Cache-Control': 'no-cache'},
@@ -511,10 +528,17 @@ def _rewrite_media_playlist(text: str, playlist_url: str,
     and should return a proxied URL.  Used for sources (e.g. Pluto) whose
     CDN segment signing tokens rotate mid-stream — routing segments through
     PlaylistManager prevents clients from 403-freezing when the token rolls.
+
+    When seg_proxy_fn is provided we also strip #EXT-X-DISCONTINUITY tags.
+    The segment proxy rewrites PCR/PTS/DTS timestamps to be continuous across
+    SSAI ad/content boundaries, so informing the player about the splice point
+    just causes unnecessary rebuffering.
     """
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
+        if stripped == '#EXT-X-DISCONTINUITY' and seg_proxy_fn:
+            continue
         if stripped and not stripped.startswith('#'):
             abs_url = urljoin(playlist_url, stripped)
             line = seg_proxy_fn(abs_url) if seg_proxy_fn else abs_url
@@ -524,7 +548,7 @@ def _rewrite_media_playlist(text: str, playlist_url: str,
     return '\n'.join(lines)
 
 
-def _make_pluto_seg_proxy_fn(source_name: str):
+def _make_pluto_seg_proxy_fn(source_name: str, channel_id: str = ''):
     """
     Return a segment URL rewriter for Pluto that routes SSAI CDN segments
     through the PlaylistManager /play/pluto/segment proxy.
@@ -535,15 +559,19 @@ def _make_pluto_seg_proxy_fn(source_name: str):
     Routing segments through PlaylistManager gives us a stable URL surface while
     letting the variant proxy supply a fresh signed URL on each manifest poll.
 
+    *channel_id* is embedded in the proxy URL so the segment handler can look
+    up per-channel timestamp state for SSAI stitching.
+
     Non-Pluto CDN segments (subtitles, fallback manifests) are returned as
     absolute direct URLs and are not proxied — they don't carry rotating tokens.
     """
     base = request.host_url.rstrip('/')
+    ch_param = f'&ch={_quote(channel_id, safe="")}' if channel_id else ''
 
     def _proxy(abs_url: str) -> str:
         parsed = urlsplit(abs_url)
         if _is_pluto_cdn_host(parsed.netloc):
-            return f'{base}/play/pluto/segment?url={_quote(abs_url, safe="")}'
+            return f'{base}/play/pluto/segment?url={_quote(abs_url, safe="")}{ch_param}'
         return abs_url
 
     return _proxy
@@ -713,7 +741,7 @@ def hls_manifest_proxy(source_name: str, channel_id: str):
     text = master_r.text
 
     if '#EXT-X-STREAM-INF' not in text:
-        seg_proxy_fn = _make_pluto_seg_proxy_fn(source_name) if source_name == 'pluto' else None
+        seg_proxy_fn = _make_pluto_seg_proxy_fn(source_name, channel.source_channel_id) if source_name == 'pluto' else None
         return Response(
             _rewrite_media_playlist(text, effective_master_url, seg_proxy_fn),
             mimetype='application/vnd.apple.mpegurl',
@@ -770,7 +798,7 @@ def hls_variant_proxy(source_name: str, channel_id: str):
     variant_url = variants[min(index, len(variants) - 1)] if variants else master_r.url
     variant_r = _fetch_manifest(variant_url, session)
 
-    seg_proxy_fn = _make_pluto_seg_proxy_fn(source_name) if source_name == 'pluto' else None
+    seg_proxy_fn = _make_pluto_seg_proxy_fn(source_name, channel.source_channel_id) if source_name == 'pluto' else None
     return Response(
         _rewrite_media_playlist(variant_r.text, variant_r.url, seg_proxy_fn),
         mimetype='application/vnd.apple.mpegurl',
