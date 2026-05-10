@@ -238,8 +238,10 @@ def _is_pluto_cdn_host(netloc: str) -> bool:
     netloc = netloc.lower().split(':')[0]
     if netloc in _PLUTO_SEGMENT_CDN_HOSTS:
         return True
-    # Catch additional *.prd.pluto.tv stitcher hostnames not listed explicitly
-    return netloc.endswith('.prd.pluto.tv') or 'jmpromo' in netloc
+    # Catch additional *.prd.pluto.tv stitcher hostnames not listed explicitly,
+    # and *.plutotv.net delivery hosts (e.g. siloh-ns1.plutotv.net) that carry
+    # the same signed tokens and must be proxied for stitching to work.
+    return netloc.endswith('.prd.pluto.tv') or netloc.endswith('.plutotv.net') or 'jmpromo' in netloc
 
 
 _PLUTO_SEG_HEADERS = {
