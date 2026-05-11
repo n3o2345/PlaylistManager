@@ -22,9 +22,13 @@ ENV PLUTO_X11_ENABLED=1 \
     PLUTO_X11_STARTUP_WAIT=12 \
     CHROMIUM_PATH=/usr/bin/chromium
 
+# jellyfin-ffmpeg lives here; add to PATH so bare `ffmpeg` resolves to it
+ENV PATH="/usr/lib/jellyfin-ffmpeg:$PATH"
+
 WORKDIR /app
 
 # ── System deps ───────────────────────────────────────────────────────────────
+# Note: NO ffmpeg from apt — jellyfin-ffmpeg replaces it (NVENC/VAAPI baked in)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-venv \
@@ -32,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     curl \
+    wget \
     redis-server \
     ca-certificates \
     git \
@@ -39,12 +44,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-utils \
     xauth \
     x11-xserver-utils \
-    ffmpeg \
     pulseaudio \
     pulseaudio-utils \
     chromium \
   && rm -rf /var/lib/apt/lists/* \
   && python3 -m venv /opt/venv
+
+# ── jellyfin-ffmpeg (bookworm) — NVENC + VAAPI + QSV baked in ────────────────
+# Debian bookworm's stock ffmpeg is compiled WITHOUT --enable-nvenc, so
+# `ffmpeg -encoders` never lists h264_nvenc even with GPU passthrough working.
+# jellyfin-ffmpeg ships a static build that includes all three GPU paths.
+# The NVENC runtime libs are injected at container start by
+# nvidia-container-toolkit — no CUDA version is baked into the image.
+#
+# To update: check https://github.com/jellyfin/jellyfin-ffmpeg/releases
+ARG JELLYFIN_FFMPEG_VERSION=7.0.2-9
+RUN ARCH=$(dpkg --print-architecture) \
+  && wget -q -O /tmp/jf-ffmpeg.deb \
+     "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v${JELLYFIN_FFMPEG_VERSION}/jellyfin-ffmpeg7_${JELLYFIN_FFMPEG_VERSION}-bookworm_${ARCH}.deb" \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends /tmp/jf-ffmpeg.deb \
+  && rm /tmp/jf-ffmpeg.deb \
+  && rm -rf /var/lib/apt/lists/* \
+  && ffmpeg -version | head -1
 
 # ── Python deps ───────────────────────────────────────────────────────────────
 COPY requirements.txt .

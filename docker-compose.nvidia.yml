@@ -4,9 +4,17 @@
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 #
-# Requires nvidia-container-toolkit installed and configured on the host.
-# On TrueNAS SCALE: select the NVIDIA GPU under Resources → GPU Passthrough,
-# OR run via the CLI with the override file as shown above.
+# Requirements:
+#   - nvidia-container-toolkit installed and configured on the host
+#   - On TrueNAS SCALE: select the NVIDIA GPU under Resources → GPU Passthrough,
+#     OR run via the CLI with the override file as shown above.
+#
+# Why this works with jellyfin-ffmpeg:
+#   Debian bookworm's stock ffmpeg is compiled WITHOUT --enable-nvenc, so
+#   h264_nvenc never appears even when GPU passthrough is working.
+#   jellyfin-ffmpeg ships a static build that includes h264_nvenc/vaapi/qsv.
+#   The NVENC runtime (.so libs) are injected at container start by
+#   nvidia-container-toolkit — nothing CUDA-version-specific is in the image.
 
 services:
   playlistmanager:
@@ -16,8 +24,7 @@ services:
       # Pluto session starts.  Remove this line to re-enable auto-detection.
       PLUTO_X11_ENCODER: h264_nvenc
 
-      # Pluto's stream player takes a little longer to start than CPU mode
-      # because nvenc init adds ~2 s on first encode.
+      # nvenc initialisation adds ~2 s on the first encode.
       PLUTO_X11_STARTUP_WAIT: 15
 
     deploy:
