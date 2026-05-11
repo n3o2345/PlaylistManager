@@ -76,33 +76,67 @@ MAX_QUEUE_DEPTH = 64      # chunks buffered per reader before dropping
 # ---------------------------------------------------------------------------
 
 def _find_chromium() -> str:
-    """Return the path to a usable Chromium/Chrome binary."""
+    """Return the path to a usable Chromium/Chrome binary.
+
+    Priority (highest → lowest):
+      1. CHROMIUM_PATH env var — explicit operator override
+      2. System apt/package Chromium  (/usr/bin/chromium, chromium-browser, …)
+         These are real browser builds without the "Chrome for Testing" brand
+         that Pluto TV and other streaming sites detect and block.
+      3. Playwright's bundled Chromium — last resort only.  It is branded
+         "Chrome for Testing" which streaming sites use to identify and block
+         automated browsers.  It should never be used for live-TV capture.
+    """
+    # ── 1. Explicit override ────────────────────────────────────────────────
     override = os.environ.get("CHROMIUM_PATH")
     if override and os.path.isfile(override):
+        logger.info("[pluto-x11] Chromium: using CHROMIUM_PATH=%s", override)
         return override
 
-    # Playwright installs its own Chromium; ask it for the path.
+    # ── 2. Real system Chromium (preferred — no "Chrome for Testing" brand) ─
+    for candidate in (
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+    ):
+        try:
+            if candidate.startswith("/"):
+                if os.path.isfile(candidate):
+                    logger.info("[pluto-x11] Chromium: using system binary %s", candidate)
+                    return candidate
+            else:
+                path = subprocess.check_output(["which", candidate], text=True).strip()
+                if path and os.path.isfile(path):
+                    logger.info("[pluto-x11] Chromium: using system binary %s", path)
+                    return path
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    # ── 3. Playwright Chromium — fallback only, with a loud warning ─────────
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
             exe = p.chromium.executable_path
         if exe and os.path.isfile(exe):
-            logger.debug("[pluto-x11] Chromium via Playwright: %s", exe)
+            logger.warning(
+                "[pluto-x11] Falling back to Playwright Chromium (%s). "
+                "This binary is branded 'Chrome for Testing' and streaming "
+                "sites like Pluto TV will likely block it. "
+                "Install the 'chromium' apt package or set CHROMIUM_PATH.",
+                exe,
+            )
             return exe
     except Exception as e:
         logger.debug("[pluto-x11] Playwright chromium lookup failed: %s", e)
 
-    # Fallback: common system paths
-    for candidate in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable"):
-        try:
-            path = subprocess.check_output(["which", candidate], text=True).strip()
-            if path:
-                return path
-        except subprocess.CalledProcessError:
-            pass
-
     raise RuntimeError(
-        "No Chromium binary found.  Set CHROMIUM_PATH or install chromium."
+        "No Chromium binary found. "
+        "Install the 'chromium' apt package or set CHROMIUM_PATH env var."
     )
 
 
@@ -470,23 +504,34 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
             # ── Software rendering ────────────────────────────────────────────
             # Do NOT use --disable-gpu: it kills the entire GPU process which
             # also kills the software video-decode path.  Pluto's HLS player
-            # uses a <video> element that needs at least SwiftShader to decode.
+            # uses a <video> element / MSE pipeline that lives in the GPU proc.
             "--use-gl=swiftshader",             # software GL — no real GPU needed
             "--use-angle=swiftshader",          # ANGLE software backend
             "--disable-gpu-sandbox",            # required inside container/Xvfb
-            "--ignore-gpu-blocklist",           # ignore GPU block-list (irrelevant on Xvfb)
+            "--ignore-gpu-blocklist",           # irrelevant on Xvfb; suppress noise
             # ── Anti-automation detection ─────────────────────────────────────
-            # Playwright's "Chrome for Testing" sets navigator.webdriver=true
-            # which Pluto TV detects and refuses to start the stream.
+            # Removes navigator.webdriver=true.  Combined with using a real apt
+            # Chromium binary (not Playwright's "Chrome for Testing"), this is
+            # sufficient to pass Pluto TV's bot checks.
             "--disable-blink-features=AutomationControlled",
+            # UA must match the system chromium version; avoids UA/binary mismatch
+            # that some fingerprinting systems flag.  Chromium apt ≈ 124-126 on 24.04.
             "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            # ── Startup / first-run suppression ──────────────────────────────
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-component-update",       # no update nag dialogs
+            "--ash-no-nudges",                  # suppress system nudge popups
+            "--password-store=basic",           # no keyring prompts
             # ── General hardening ─────────────────────────────────────────────
             "--disable-dev-shm-usage",
             "--disable-extensions",
-            "--disable-infobars",               # hides the "automation" banner
+            "--disable-infobars",
             "--autoplay-policy=no-user-gesture-required",
-            "--mute-audio",                     # PulseAudio handles audio capture
+            # NOTE: do NOT add --mute-audio here.  Pluto TV's player checks the
+            # AudioContext state before starting the stream; muting at the browser
+            # level can prevent it from ever transitioning out of "Loading stream..."
             f"--window-size={DISPLAY_W},{DISPLAY_H}",
             "--start-maximized",
             "--kiosk",                          # full-screen, no browser chrome
@@ -496,8 +541,8 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
-    # Wait for Chromium to load the page and start streaming before grabbing.
-    # STARTUP_WAIT defaults to 5 s — bump PLUTO_X11_STARTUP_WAIT=12 if needed.
+    # Wait for Chromium to load the page and the stream to begin.
+    # STARTUP_WAIT defaults to 12 s (Dockerfile) — increase via env if needed.
     time.sleep(STARTUP_WAIT)
 
     if sess.browser_proc.poll() is not None:
