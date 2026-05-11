@@ -5,10 +5,21 @@
 #   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 #
 # Requires nvidia-container-toolkit installed and configured on the host.
-# On TrueNAS SCALE: select the NVIDIA GPU under app Resources → GPU Passthrough.
+# On TrueNAS SCALE: select the NVIDIA GPU under Resources → GPU Passthrough,
+# OR run via the CLI with the override file as shown above.
 
 services:
   playlistmanager:
+    environment:
+      # Force h264_nvenc — skips the runtime probe which can fail if the
+      # NVIDIA kernel module hasn't fully initialised before the first
+      # Pluto session starts.  Remove this line to re-enable auto-detection.
+      PLUTO_X11_ENCODER: h264_nvenc
+
+      # Pluto's stream player takes a little longer to start than CPU mode
+      # because nvenc init adds ~2 s on first encode.
+      PLUTO_X11_STARTUP_WAIT: 15
+
     deploy:
       resources:
         reservations:

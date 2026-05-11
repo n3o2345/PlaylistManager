@@ -1,8 +1,18 @@
-FROM python:3.12-slim
+# ── Base image ────────────────────────────────────────────────────────────────
+# nvidia/cuda runtime includes libnvidia-encode and libnvcuvid so h264_nvenc
+# works without relying solely on nvidia-container-toolkit injection at startup.
+# Ubuntu 24.04 (noble) ships Python 3.12 natively.
+#
+# CPU-only / non-NVIDIA hosts: this image still builds and runs fine; ffmpeg
+# will auto-detect no GPU and fall back to libx264.
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    # Tell Python / pip where to find the venv we create below
+    PATH="/opt/venv/bin:$PATH"
 
 # ── tvapp2 internal settings ──────────────────────────────────────────────────
 # TVAPP2_ENABLED=1    start the embedded tvapp2 daemon (default: enabled)
@@ -21,14 +31,17 @@ ENV PLUTO_X11_ENABLED=1 \
     PLUTO_X11_FPS=30 \
     PLUTO_X11_BITRATE=2500k \
     PLUTO_X11_IDLE_TIMEOUT=30 \
-    PLUTO_X11_STARTUP_WAIT=5
+    PLUTO_X11_STARTUP_WAIT=12
 
 WORKDIR /app
 
 # ── System deps ───────────────────────────────────────────────────────────────
-# nodejs / npm for tvapp2; git for cloning it at build time
-# xvfb / ffmpeg / pulseaudio for Pluto X11 screen-grab streaming
+# python3.12 + venv; nodejs/npm for tvapp2; ffmpeg with nvenc; xvfb + pulseaudio
+# for Pluto X11 screen-grab streaming.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3-pip \
     gcc \
     libpq-dev \
     curl \
@@ -42,7 +55,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pulseaudio-utils \
     && curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # Create a venv so pip doesn't fight the system Python
+    && python3.12 -m venv /opt/venv
 
 # ── Python deps ───────────────────────────────────────────────────────────────
 COPY requirements.txt .
