@@ -473,18 +473,35 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
     )
 
     # ── 1. Xvfb ────────────────────────────────────────────────────────────
+    # Pre-create the Unix socket directory — required in slim containers where
+    # /tmp/.X11-unix may not exist and Xvfb won't create it itself.
+    os.makedirs("/tmp/.X11-unix", mode=0o1777, exist_ok=True)
+
+    # IMPORTANT: do NOT pass -nolisten unix.  That flag prevents Xvfb from
+    # creating the /tmp/.X11-unix/X<N> socket, which means Chromium and ffmpeg
+    # (x11grab) can't connect to the display — causing immediate Xvfb exit.
+    # -nolisten tcp is sufficient to block network exposure.
+    xvfb_stderr = subprocess.PIPE
     sess.xvfb_proc = subprocess.Popen(
         [
             "Xvfb", f":{display_num}",
             "-screen", "0", f"{DISPLAY_W}x{DISPLAY_H}x24",
-            "-ac", "-nolisten", "tcp", "-nolisten", "unix",
+            "-ac", "-nolisten", "tcp",
         ],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL, stderr=xvfb_stderr,
     )
-    time.sleep(0.8)   # let Xvfb bind before anything touches the display
+    time.sleep(1.2)   # let Xvfb bind its socket before anything touches the display
 
     if sess.xvfb_proc.poll() is not None:
-        raise RuntimeError(f"Xvfb failed to start for display :{display_num}")
+        err = ""
+        try:
+            err = sess.xvfb_proc.stderr.read().decode(errors="replace").strip()
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"Xvfb failed to start for display :{display_num}"
+            + (f" — {err}" if err else "")
+        )
 
     # ── 2. PulseAudio (optional — graceful fallback) ────────────────────────
     sess.pulse_proc = _start_pulseaudio(display_num)
