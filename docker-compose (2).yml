@@ -1,0 +1,70 @@
+services:
+  playlistmanager:
+    container_name: playlistmanager
+    image: ghcr.io/n3o2345/playlistmanager:latest
+    restart: unless-stopped
+    ports:
+      - '5523:5523'
+    volumes:
+      - db_data:/data
+    environment:
+      # ── Embedded tvapp2 daemon ──────────────────────────────────────────────
+      TVAPP2_ENABLED: 1
+      TVAPP2_STREAM_QUALITY: hd
+      TVAPP2_LOG_LEVEL: 2
+
+      # ── Pluto X11 screen-grab ───────────────────────────────────────────────
+      # Set PLUTO_X11_ENABLED=0 to disable and fall back to HLS proxy.
+      PLUTO_X11_ENABLED: 1
+      PLUTO_X11_WIDTH: 1280
+      PLUTO_X11_HEIGHT: 720
+      PLUTO_X11_FPS: 30
+      PLUTO_X11_BITRATE: "2500k"
+      PLUTO_X11_IDLE_TIMEOUT: 30
+      # 12 s gives Chromium time to load Pluto's player and begin buffering
+      # before ffmpeg starts grabbing.  Increase to 18 on slow networks.
+      PLUTO_X11_STARTUP_WAIT: 12
+      # Real apt Chromium — no "Chrome for Testing" banner that Pluto detects.
+      # Playwright's bundled binary is only used as a fallback if this is unset.
+      CHROMIUM_PATH: /usr/bin/chromium
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -sf http://localhost:5523/health || exit 1
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+
+    # Chromium needs adequate shared memory
+    shm_size: 256m
+
+volumes:
+  db_data:
+
+# =============================================================================
+# GPU profiles
+# Copy the relevant block into docker-compose.override.yml
+# =============================================================================
+#
+# NVIDIA (h264_nvenc) — requires nvidia-container-toolkit on host
+# services:
+#   playlistmanager:
+#     deploy:
+#       resources:
+#         reservations:
+#           devices:
+#             - driver: nvidia
+#               count: 1
+#               capabilities: [gpu, video]
+#
+# Intel/AMD VAAPI (h264_vaapi) — requires /dev/dri/renderD128 on host
+# services:
+#   playlistmanager:
+#     devices:
+#       - /dev/dri/renderD128:/dev/dri/renderD128
+#     group_add:
+#       - video
+#
+# CPU fallback (libx264) — no extra config needed; auto-detected

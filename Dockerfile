@@ -31,7 +31,11 @@ ENV PLUTO_X11_ENABLED=1 \
     PLUTO_X11_FPS=30 \
     PLUTO_X11_BITRATE=2500k \
     PLUTO_X11_IDLE_TIMEOUT=30 \
-    PLUTO_X11_STARTUP_WAIT=12
+    PLUTO_X11_STARTUP_WAIT=12 \
+    # Use the real apt Chromium by default — NOT Playwright's "Chrome for Testing".
+    # Streaming sites including Pluto TV detect the "Chrome for Testing" brand and
+    # block the stream.  The apt chromium package has no such branding.
+    CHROMIUM_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
@@ -53,6 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     pulseaudio \
     pulseaudio-utils \
+    chromium \
     && curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
