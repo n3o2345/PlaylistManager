@@ -734,7 +734,17 @@ def generate_m3u(filters: dict = None, base_url: str = None,
         if guide_cat:
             attrs.append(f'tvc-guide-categories="{guide_cat}"')
         lines.append(f'#EXTINF:-1 {" ".join(attrs)},{display_name}')
-        lines.append(f'{base_url}/play/{ch.source.name}/{_url_quote(ch.source_channel_id, safe="")}.m3u8')
+        # Pluto channels: emit the X11 grab endpoint when enabled; this
+        # bypasses SSAI token rotation entirely. Other sources use HLS as normal.
+        _cid_quoted = _url_quote(ch.source_channel_id, safe='')
+        if getattr(getattr(ch, 'source', None), 'name', None) == 'pluto':
+            import os as _os
+            if _os.environ.get('PLUTO_X11_ENABLED', '1') != '0':
+                lines.append(f'{base_url}/play/pluto/{_cid_quoted}/x11.ts')
+            else:
+                lines.append(f'{base_url}/play/{ch.source.name}/{_cid_quoted}.m3u8')
+        else:
+            lines.append(f'{base_url}/play/{ch.source.name}/{_cid_quoted}.m3u8')
 
     return '\n'.join(lines)
 
@@ -799,7 +809,15 @@ def generate_gracenote_m3u(filters: dict = None, base_url: str = None,
         if guide_cat:
             attrs.append(f'tvc-guide-categories="{guide_cat}"')
         lines.append(f'#EXTINF:-1 {" ".join(attrs)},{display_name}')
-        lines.append(f'{base_url}/play/{ch.source.name}/{_url_quote(ch.source_channel_id, safe="")}.m3u8')
+        _cid_quoted = _url_quote(ch.source_channel_id, safe='')
+        if getattr(getattr(ch, 'source', None), 'name', None) == 'pluto':
+            import os as _os
+            if _os.environ.get('PLUTO_X11_ENABLED', '1') != '0':
+                lines.append(f'{base_url}/play/pluto/{_cid_quoted}/x11.ts')
+            else:
+                lines.append(f'{base_url}/play/{ch.source.name}/{_cid_quoted}.m3u8')
+        else:
+            lines.append(f'{base_url}/play/{ch.source.name}/{_cid_quoted}.m3u8')
 
     return '\n'.join(lines)
 

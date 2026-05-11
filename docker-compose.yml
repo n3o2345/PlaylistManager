@@ -9,12 +9,21 @@ services:
       - db_data:/data
     environment:
       # ── Embedded tvapp2 daemon ──────────────────────────────────────────────
-      # tvapp2 runs internally on localhost:4124. Set TVAPP2_ENABLED=0 to
-      # disable it (e.g. if you run tvapp2 as a separate container instead).
       TVAPP2_ENABLED: 1
-      TVAPP2_STREAM_QUALITY: hd     # hd | sd
-      TVAPP2_LOG_LEVEL: 2           # 0=off … 6=verbose
-      # TVAPP2_PORT: 4124           # internal port (no need to expose externally)
+      TVAPP2_STREAM_QUALITY: hd
+      TVAPP2_LOG_LEVEL: 2
+
+      # ── Pluto X11 screen-grab ───────────────────────────────────────────────
+      # Set PLUTO_X11_ENABLED=0 to disable and fall back to HLS proxy.
+      PLUTO_X11_ENABLED: 1
+      PLUTO_X11_WIDTH: 1280
+      PLUTO_X11_HEIGHT: 720
+      PLUTO_X11_FPS: 30
+      PLUTO_X11_BITRATE: "2500k"
+      PLUTO_X11_IDLE_TIMEOUT: 30
+      PLUTO_X11_STARTUP_WAIT: 5
+      # CHROMIUM_PATH: /usr/bin/chromium
+
     healthcheck:
       test:
         - CMD-SHELL
@@ -23,3 +32,35 @@ services:
       timeout: 5s
       start_period: 120s
       retries: 5
+
+    # Chromium needs adequate shared memory
+    shm_size: 256m
+
+volumes:
+  db_data:
+
+# =============================================================================
+# GPU profiles
+# Copy the relevant block into docker-compose.override.yml
+# =============================================================================
+#
+# NVIDIA (h264_nvenc) — requires nvidia-container-toolkit on host
+# services:
+#   playlistmanager:
+#     deploy:
+#       resources:
+#         reservations:
+#           devices:
+#             - driver: nvidia
+#               count: 1
+#               capabilities: [gpu, video]
+#
+# Intel/AMD VAAPI (h264_vaapi) — requires /dev/dri/renderD128 on host
+# services:
+#   playlistmanager:
+#     devices:
+#       - /dev/dri/renderD128:/dev/dri/renderD128
+#     group_add:
+#       - video
+#
+# CPU fallback (libx264) — no extra config needed; auto-detected

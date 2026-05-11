@@ -1,0 +1,18 @@
+# docker-compose.nvidia.yml
+# NVIDIA GPU (h264_nvenc encoder)
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
+#
+# Requires nvidia-container-toolkit installed and configured on the host.
+# On TrueNAS SCALE: select the NVIDIA GPU under app Resources → GPU Passthrough.
+
+services:
+  playlistmanager:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, video]

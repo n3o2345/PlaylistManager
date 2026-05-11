@@ -14,10 +14,20 @@ ENV TVAPP2_ENABLED=1 \
     TVAPP2_PORT=4124 \
     NODE_VERSION=22
 
+# ── Pluto X11 defaults (can be overridden at runtime via docker-compose env) ──
+ENV PLUTO_X11_ENABLED=1 \
+    PLUTO_X11_WIDTH=1280 \
+    PLUTO_X11_HEIGHT=720 \
+    PLUTO_X11_FPS=30 \
+    PLUTO_X11_BITRATE=2500k \
+    PLUTO_X11_IDLE_TIMEOUT=30 \
+    PLUTO_X11_STARTUP_WAIT=5
+
 WORKDIR /app
 
 # ── System deps ───────────────────────────────────────────────────────────────
 # nodejs / npm for tvapp2; git for cloning it at build time
+# xvfb / ffmpeg / pulseaudio for Pluto X11 screen-grab streaming
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
@@ -25,6 +35,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     redis-server \
     ca-certificates \
     git \
+    xvfb \
+    x11-utils \
+    ffmpeg \
+    pulseaudio \
+    pulseaudio-utils \
     && curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -45,7 +60,7 @@ RUN git clone --depth=1 https://github.com/TheBinaryNinja/tvapp2.git /opt/tvapp2
     && npm install --omit=dev \
     && mkdir -p /data/tvapp2
 
-# ── PlaylistManager app ──────────────────────────────────────────────────────────
+# ── PlaylistManager app ───────────────────────────────────────────────────────
 COPY . .
 
 RUN chmod +x /app/entrypoint.sh

@@ -14,7 +14,7 @@ from urllib.parse import quote as _quote, unquote as _unquote, urljoin, urlsplit
 
 import requests as _requests
 
-from flask import Blueprint, redirect, abort, request, Response
+from flask import Blueprint, redirect, abort, request, Response, stream_with_context
 from app.config_store import persist_source_config_updates
 from .ts_stitcher import stitch_segment
 from ..extensions import db
@@ -942,3 +942,69 @@ def play(source_name: str, channel_id: str):
         client_ip, source_name, channel_id, channel.name, resolved_url[:80],
     )
     return redirect(resolved_url, 302)
+
+
+# =============================================================================
+# Pluto X11 screen-grab routes
+# =============================================================================
+
+@play_bp.route('/play/pluto/<channel_id>/x11.ts')
+def pluto_x11_stream(channel_id: str):
+    """
+    Stream a Pluto TV channel via X11 screen-grab instead of HLS.
+
+    Bypasses Pluto's SSAI token rotation entirely — the Pluto web player runs
+    inside a headless Xvfb display and ffmpeg x11grabs the screen to MPEG-TS.
+    Commercial breaks still play but never cause 403 / black-screen artefacts.
+
+    GPU encoding is used when available (NVENC → VAAPI → libx264 fallback).
+    Multiple concurrent clients on the same channel share one ffmpeg process.
+    """
+    from ..scrapers.pluto_x11 import stream_channel, ENABLED as _X11_ENABLED
+
+    if not _X11_ENABLED:
+        abort(503)   # disabled via PLUTO_X11_ENABLED=0
+
+    channel = (
+        Channel.query
+        .join(Source)
+        .filter(Source.name == 'pluto', Channel.source_channel_id == channel_id)
+        .first()
+    )
+    if not channel:
+        abort(404)
+
+    # Build the Pluto web player URL using the channel slug
+    slug = channel.slug or channel_id
+    pluto_web_url = f"https://pluto.tv/live-tv/{slug}"
+
+    logger.info(
+        '[pluto-x11] client=%s channel=%s slug=%s',
+        _client_ip(), channel_id, slug,
+    )
+
+    return Response(
+        stream_with_context(stream_channel(channel_id, pluto_web_url)),
+        mimetype='video/mp2t',
+        headers={
+            'Cache-Control':    'no-cache',
+            'X-Accel-Buffering': 'no',   # tell nginx not to buffer this
+        },
+    )
+
+
+@play_bp.route('/play/pluto/x11/status')
+def pluto_x11_status():
+    """
+    JSON endpoint listing active Pluto X11 grab sessions.
+    Useful for debugging — shows encoder, reader count, and idle time.
+    """
+    import json
+    from ..scrapers.pluto_x11 import active_sessions, ENABLED as _X11_ENABLED
+    return Response(
+        json.dumps({
+            "enabled":  _X11_ENABLED,
+            "sessions": active_sessions(),
+        }, indent=2),
+        mimetype='application/json',
+    )

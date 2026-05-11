@@ -1,0 +1,15 @@
+# docker-compose.vaapi.yml
+# Intel / AMD GPU (VAAPI h264_vaapi encoder)
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.vaapi.yml up -d
+#
+# Requires /dev/dri/renderD128 on the host (i915 or amdgpu driver loaded).
+# On TrueNAS SCALE: add the iGPU via the app Resources → GPU Passthrough section.
+
+services:
+  playlistmanager:
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    group_add:
+      - video
