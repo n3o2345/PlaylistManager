@@ -20,11 +20,9 @@ Architecture
 GPU encoding
 ------------
 Encoder preference order (auto-detected at first use):
-  1. h264_nvenc   — NVIDIA, requires runtime: nvidia in docker-compose
+  1. h264_nvenc   — NVIDIA, requires --gpus in docker-compose
   2. h264_vaapi   — Intel/AMD, requires /dev/dri device in compose
   3. libx264      — CPU fallback, always available
-
-Override with PLUTO_X11_ENCODER=h264_nvenc|h264_vaapi|libx264.
 
 One Xvfb+Chromium+ffmpeg process group per channel slug.
 Sessions are reference-counted and torn down IDLE_TIMEOUT seconds after
@@ -38,8 +36,7 @@ PLUTO_X11_HEIGHT        Capture height (default 720)
 PLUTO_X11_FPS           Frame rate     (default 30)
 PLUTO_X11_BITRATE       Video bitrate  (default 2500k)
 PLUTO_X11_IDLE_TIMEOUT  Seconds to keep a session alive after last reader disconnects (default 30)
-PLUTO_X11_STARTUP_WAIT  Seconds to wait for Chromium to load before grabbing (default 12)
-PLUTO_X11_ENCODER       Force a specific encoder: h264_nvenc | h264_vaapi | libx264
+PLUTO_X11_STARTUP_WAIT  Seconds to wait for Chromium to load before grabbing (default 5)
 CHROMIUM_PATH           Override path to the Chromium/Chrome binary
 PULSE_SERVER            Override PulseAudio server address (default: unix socket in /tmp)
 """
@@ -67,7 +64,7 @@ DISPLAY_H       = int(os.environ.get("PLUTO_X11_HEIGHT",       "720"))
 FRAMERATE       = int(os.environ.get("PLUTO_X11_FPS",          "30"))
 BITRATE         = os.environ.get("PLUTO_X11_BITRATE",          "2500k")
 IDLE_TIMEOUT    = int(os.environ.get("PLUTO_X11_IDLE_TIMEOUT", "30"))
-STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "12"))
+STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "5"))
 # Force a specific encoder; if unset, auto-detected at first use.
 # Valid values: h264_nvenc | h264_vaapi | libx264
 FORCE_ENCODER   = os.environ.get("PLUTO_X11_ENCODER", "").strip().lower() or None
@@ -473,35 +470,18 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
     )
 
     # ── 1. Xvfb ────────────────────────────────────────────────────────────
-    # Pre-create the Unix socket directory — required in slim containers where
-    # /tmp/.X11-unix may not exist and Xvfb won't create it itself.
-    os.makedirs("/tmp/.X11-unix", mode=0o1777, exist_ok=True)
-
-    # IMPORTANT: do NOT pass -nolisten unix.  That flag prevents Xvfb from
-    # creating the /tmp/.X11-unix/X<N> socket, which means Chromium and ffmpeg
-    # (x11grab) can't connect to the display — causing immediate Xvfb exit.
-    # -nolisten tcp is sufficient to block network exposure.
-    xvfb_stderr = subprocess.PIPE
     sess.xvfb_proc = subprocess.Popen(
         [
             "Xvfb", f":{display_num}",
             "-screen", "0", f"{DISPLAY_W}x{DISPLAY_H}x24",
-            "-ac", "-nolisten", "tcp",
+            "-ac", "-nolisten", "tcp", "-nolisten", "unix",
         ],
-        stdout=subprocess.DEVNULL, stderr=xvfb_stderr,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    time.sleep(1.2)   # let Xvfb bind its socket before anything touches the display
+    time.sleep(0.8)   # let Xvfb bind before anything touches the display
 
     if sess.xvfb_proc.poll() is not None:
-        err = ""
-        try:
-            err = sess.xvfb_proc.stderr.read().decode(errors="replace").strip()
-        except Exception:
-            pass
-        raise RuntimeError(
-            f"Xvfb failed to start for display :{display_num}"
-            + (f" — {err}" if err else "")
-        )
+        raise RuntimeError(f"Xvfb failed to start for display :{display_num}")
 
     # ── 2. PulseAudio (optional — graceful fallback) ────────────────────────
     sess.pulse_proc = _start_pulseaudio(display_num)
@@ -521,29 +501,32 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
         [
             chromium,
             "--no-sandbox",
-            # ── Software rendering ────────────────────────────────────────────
-            # Do NOT use --disable-gpu: it kills the entire GPU process which
-            # also kills the software video-decode path.  Pluto's HLS player
-            # uses a <video> element / MSE pipeline that lives in the GPU proc.
-            "--use-gl=swiftshader",             # software GL — no real GPU needed
-            "--use-angle=swiftshader",          # ANGLE software backend
-            "--disable-gpu-sandbox",            # required inside container/Xvfb
-            "--ignore-gpu-blocklist",           # irrelevant on Xvfb; suppress noise
+            "--disable-setuid-sandbox",
+            # ── GPU / rendering ───────────────────────────────────────────────
+            # Use --disable-gpu (same as philo.js) rather than SwiftShader.
+            # SwiftShader requires libvk_swiftshader.so / Vulkan libs that are
+            # frequently absent in minimal Docker images and cause an immediate
+            # Chromium crash.  x11grab captures pixels from the Xvfb framebuffer
+            # regardless of the rendering backend, so software decode via the
+            # CPU path is perfectly fine here.
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-gpu-sandbox",
             # ── Anti-automation detection ─────────────────────────────────────
             # Removes navigator.webdriver=true.  Combined with using a real apt
             # Chromium binary (not Playwright's "Chrome for Testing"), this is
             # sufficient to pass Pluto TV's bot checks.
             "--disable-blink-features=AutomationControlled",
             # UA must match the system chromium version; avoids UA/binary mismatch
-            # that some fingerprinting systems flag.
+            # that some fingerprinting systems flag.  Chromium apt ≈ 124-126 on 24.04.
             "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             # ── Startup / first-run suppression ──────────────────────────────
             "--no-first-run",
             "--no-default-browser-check",
-            "--disable-component-update",
-            "--ash-no-nudges",
-            "--password-store=basic",
+            "--disable-component-update",       # no update nag dialogs
+            "--ash-no-nudges",                  # suppress system nudge popups
+            "--password-store=basic",           # no keyring prompts
             # ── General hardening ─────────────────────────────────────────────
             "--disable-dev-shm-usage",
             "--disable-extensions",
@@ -558,15 +541,24 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
             f"--app={pluto_url}",
         ],
         env=browser_env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,   # capture stderr so crashes are visible in logs
     )
 
     # Wait for Chromium to load the page and the stream to begin.
-    # STARTUP_WAIT defaults to 12 s — increase via env if needed.
+    # STARTUP_WAIT defaults to 12 s (Dockerfile) — increase via env if needed.
     time.sleep(STARTUP_WAIT)
 
     if sess.browser_proc.poll() is not None:
-        raise RuntimeError("Chromium exited immediately — check CHROMIUM_PATH and --no-sandbox support")
+        err = ""
+        try:
+            err = sess.browser_proc.stderr.read().decode(errors="replace").strip()
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"Chromium exited (code {sess.browser_proc.returncode})"
+            + (f": {err[:1000]}" if err else " — check CHROMIUM_PATH and GPU/display setup")
+        )
 
     # ── 4. ffmpeg x11grab → MPEG-TS ─────────────────────────────────────────
     ffmpeg_cmd = [
