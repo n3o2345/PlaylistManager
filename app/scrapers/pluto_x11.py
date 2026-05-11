@@ -20,9 +20,11 @@ Architecture
 GPU encoding
 ------------
 Encoder preference order (auto-detected at first use):
-  1. h264_nvenc   — NVIDIA, requires --gpus in docker-compose
+  1. h264_nvenc   — NVIDIA, requires runtime: nvidia in docker-compose
   2. h264_vaapi   — Intel/AMD, requires /dev/dri device in compose
   3. libx264      — CPU fallback, always available
+
+Override with PLUTO_X11_ENCODER=h264_nvenc|h264_vaapi|libx264.
 
 One Xvfb+Chromium+ffmpeg process group per channel slug.
 Sessions are reference-counted and torn down IDLE_TIMEOUT seconds after
@@ -36,7 +38,8 @@ PLUTO_X11_HEIGHT        Capture height (default 720)
 PLUTO_X11_FPS           Frame rate     (default 30)
 PLUTO_X11_BITRATE       Video bitrate  (default 2500k)
 PLUTO_X11_IDLE_TIMEOUT  Seconds to keep a session alive after last reader disconnects (default 30)
-PLUTO_X11_STARTUP_WAIT  Seconds to wait for Chromium to load before grabbing (default 5)
+PLUTO_X11_STARTUP_WAIT  Seconds to wait for Chromium to load before grabbing (default 12)
+PLUTO_X11_ENCODER       Force a specific encoder: h264_nvenc | h264_vaapi | libx264
 CHROMIUM_PATH           Override path to the Chromium/Chrome binary
 PULSE_SERVER            Override PulseAudio server address (default: unix socket in /tmp)
 """
@@ -64,7 +67,10 @@ DISPLAY_H       = int(os.environ.get("PLUTO_X11_HEIGHT",       "720"))
 FRAMERATE       = int(os.environ.get("PLUTO_X11_FPS",          "30"))
 BITRATE         = os.environ.get("PLUTO_X11_BITRATE",          "2500k")
 IDLE_TIMEOUT    = int(os.environ.get("PLUTO_X11_IDLE_TIMEOUT", "30"))
-STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "5"))
+STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "12"))
+# Force a specific encoder; if unset, auto-detected at first use.
+# Valid values: h264_nvenc | h264_vaapi | libx264
+FORCE_ENCODER   = os.environ.get("PLUTO_X11_ENCODER", "").strip().lower() or None
 CHUNK_SIZE      = 65536   # bytes per fan-out chunk
 MAX_QUEUE_DEPTH = 64      # chunks buffered per reader before dropping
 
@@ -73,33 +79,67 @@ MAX_QUEUE_DEPTH = 64      # chunks buffered per reader before dropping
 # ---------------------------------------------------------------------------
 
 def _find_chromium() -> str:
-    """Return the path to a usable Chromium/Chrome binary."""
+    """Return the path to a usable Chromium/Chrome binary.
+
+    Priority (highest → lowest):
+      1. CHROMIUM_PATH env var — explicit operator override
+      2. System apt/package Chromium  (/usr/bin/chromium, chromium-browser, …)
+         These are real browser builds without the "Chrome for Testing" brand
+         that Pluto TV and other streaming sites detect and block.
+      3. Playwright's bundled Chromium — last resort only.  It is branded
+         "Chrome for Testing" which streaming sites use to identify and block
+         automated browsers.  It should never be used for live-TV capture.
+    """
+    # ── 1. Explicit override ────────────────────────────────────────────────
     override = os.environ.get("CHROMIUM_PATH")
     if override and os.path.isfile(override):
+        logger.info("[pluto-x11] Chromium: using CHROMIUM_PATH=%s", override)
         return override
 
-    # Playwright installs its own Chromium; ask it for the path.
+    # ── 2. Real system Chromium (preferred — no "Chrome for Testing" brand) ─
+    for candidate in (
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+    ):
+        try:
+            if candidate.startswith("/"):
+                if os.path.isfile(candidate):
+                    logger.info("[pluto-x11] Chromium: using system binary %s", candidate)
+                    return candidate
+            else:
+                path = subprocess.check_output(["which", candidate], text=True).strip()
+                if path and os.path.isfile(path):
+                    logger.info("[pluto-x11] Chromium: using system binary %s", path)
+                    return path
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    # ── 3. Playwright Chromium — fallback only, with a loud warning ─────────
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
             exe = p.chromium.executable_path
         if exe and os.path.isfile(exe):
-            logger.debug("[pluto-x11] Chromium via Playwright: %s", exe)
+            logger.warning(
+                "[pluto-x11] Falling back to Playwright Chromium (%s). "
+                "This binary is branded 'Chrome for Testing' and streaming "
+                "sites like Pluto TV will likely block it. "
+                "Install the 'chromium' apt package or set CHROMIUM_PATH.",
+                exe,
+            )
             return exe
     except Exception as e:
         logger.debug("[pluto-x11] Playwright chromium lookup failed: %s", e)
 
-    # Fallback: common system paths
-    for candidate in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable"):
-        try:
-            path = subprocess.check_output(["which", candidate], text=True).strip()
-            if path:
-                return path
-        except subprocess.CalledProcessError:
-            pass
-
     raise RuntimeError(
-        "No Chromium binary found.  Set CHROMIUM_PATH or install chromium."
+        "No Chromium binary found. "
+        "Install the 'chromium' apt package or set CHROMIUM_PATH env var."
     )
 
 
@@ -127,10 +167,22 @@ def _detect_encoder() -> str:
     """
     Probe ffmpeg for the best available H.264 encoder.
     Returns one of: 'h264_nvenc', 'h264_vaapi', 'libx264'.
-    Result is cached after the first call.
+
+    Result is cached only after a *successful* probe so that a transient
+    failure during container start (GPU driver not yet injected by
+    nvidia-container-toolkit) doesn't permanently lock us into libx264.
+
+    Override with env var PLUTO_X11_ENCODER=h264_nvenc|h264_vaapi|libx264.
     """
     global _ENCODER_CACHE
     with _ENCODER_LOCK:
+        # Explicit override always wins and is cached immediately.
+        if FORCE_ENCODER:
+            if _ENCODER_CACHE != FORCE_ENCODER:
+                logger.info("[pluto-x11] GPU encoder forced via env: %s", FORCE_ENCODER)
+                _ENCODER_CACHE = FORCE_ENCODER
+            return _ENCODER_CACHE
+
         if _ENCODER_CACHE is not None:
             return _ENCODER_CACHE
 
@@ -141,29 +193,35 @@ def _detect_encoder() -> str:
                 stderr=subprocess.STDOUT, text=True, timeout=10,
             )
         except Exception as e:
-            logger.warning("[pluto-x11] ffmpeg encoder probe failed: %s — falling back to libx264", e)
-            _ENCODER_CACHE = "libx264"
-            return _ENCODER_CACHE
+            # Do NOT cache — allow retry on next session request.
+            logger.warning("[pluto-x11] ffmpeg encoder probe failed: %s — will retry later", e)
+            return "libx264"
 
         if "h264_nvenc" in out:
-            # Verify NVENC actually works (driver present, GPU available)
+            # Verify NVENC actually works (driver present, GPU available).
+            # Use a real encode via nullsrc — lavfi nullsrc → h264_nvenc → null muxer.
             try:
                 subprocess.check_call(
                     [
                         "ffmpeg", "-hide_banner", "-loglevel", "error",
-                        "-f", "lavfi", "-i", "nullsrc=s=64x64:r=1",
-                        "-vframes", "1",
+                        "-f", "lavfi", "-i", "nullsrc=s=128x128:r=1",
+                        "-vframes", "4",
                         "-c:v", "h264_nvenc",
                         "-f", "null", "-",
                     ],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=10,
+                    timeout=15,
                 )
                 logger.info("[pluto-x11] GPU encoder: h264_nvenc (NVIDIA)")
                 _ENCODER_CACHE = "h264_nvenc"
                 return _ENCODER_CACHE
-            except Exception:
-                logger.debug("[pluto-x11] h264_nvenc listed but probe failed — trying vaapi")
+            except Exception as exc:
+                # Do NOT cache — GPU may not be ready yet; retry next session.
+                logger.warning(
+                    "[pluto-x11] h264_nvenc probe failed (%s) — "
+                    "set PLUTO_X11_ENCODER=h264_nvenc to force, or check GPU passthrough",
+                    exc,
+                )
 
         if "h264_vaapi" in out:
             # Verify VAAPI render node exists
@@ -173,14 +231,14 @@ def _detect_encoder() -> str:
                         [
                             "ffmpeg", "-hide_banner", "-loglevel", "error",
                             "-vaapi_device", "/dev/dri/renderD128",
-                            "-f", "lavfi", "-i", "nullsrc=s=64x64:r=1",
-                            "-vframes", "1",
+                            "-f", "lavfi", "-i", "nullsrc=s=128x128:r=1",
+                            "-vframes", "4",
                             "-vf", "format=nv12,hwupload",
                             "-c:v", "h264_vaapi",
                             "-f", "null", "-",
                         ],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                        timeout=10,
+                        timeout=15,
                     )
                     logger.info("[pluto-x11] GPU encoder: h264_vaapi (Intel/AMD)")
                     _ENCODER_CACHE = "h264_vaapi"
@@ -446,19 +504,48 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
         [
             chromium,
             "--no-sandbox",
-            "--disable-gpu",                    # Chromium GPU off (we encode in ffmpeg)
+            # ── Software rendering ────────────────────────────────────────────
+            # Do NOT use --disable-gpu: it kills the entire GPU process which
+            # also kills the software video-decode path.  Pluto's HLS player
+            # uses a <video> element / MSE pipeline that lives in the GPU proc.
+            "--use-gl=swiftshader",             # software GL — no real GPU needed
+            "--use-angle=swiftshader",          # ANGLE software backend
+            "--disable-gpu-sandbox",            # required inside container/Xvfb
+            "--ignore-gpu-blocklist",           # irrelevant on Xvfb; suppress noise
+            # ── Anti-automation detection ─────────────────────────────────────
+            # Removes navigator.webdriver=true.  Combined with using a real apt
+            # Chromium binary (not Playwright's "Chrome for Testing"), this is
+            # sufficient to pass Pluto TV's bot checks.
+            "--disable-blink-features=AutomationControlled",
+            # UA must match the system chromium version; avoids UA/binary mismatch
+            # that some fingerprinting systems flag.
+            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            # ── Startup / first-run suppression ──────────────────────────────
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-component-update",
+            "--ash-no-nudges",
+            "--password-store=basic",
+            # ── General hardening ─────────────────────────────────────────────
             "--disable-dev-shm-usage",
+            "--disable-extensions",
+            "--disable-infobars",
             "--autoplay-policy=no-user-gesture-required",
+            # NOTE: do NOT add --mute-audio here.  Pluto TV's player checks the
+            # AudioContext state before starting the stream; muting at the browser
+            # level can prevent it from ever transitioning out of "Loading stream..."
             f"--window-size={DISPLAY_W},{DISPLAY_H}",
             "--start-maximized",
-            "--kiosk",                           # full-screen, no browser chrome
+            "--kiosk",                          # full-screen, no browser chrome
             f"--app={pluto_url}",
         ],
         env=browser_env,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
-    # Wait for Chromium to load the page before we start grabbing
+    # Wait for Chromium to load the page and the stream to begin.
+    # STARTUP_WAIT defaults to 12 s — increase via env if needed.
     time.sleep(STARTUP_WAIT)
 
     if sess.browser_proc.poll() is not None:

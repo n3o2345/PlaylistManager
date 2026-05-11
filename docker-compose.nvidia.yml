@@ -5,32 +5,30 @@
 #   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 #
 # Requirements:
-#   - nvidia-container-toolkit installed and configured on the host
-#   - On TrueNAS SCALE: select the NVIDIA GPU under Resources → GPU Passthrough,
-#     OR run via the CLI with the override file as shown above.
+#   - NVIDIA GPU with Turing architecture or newer (RTX 20xx / GTX 16xx+)
+#   - nvidia-container-toolkit installed on the host
+#   - TrueNAS SCALE Goldeye (25.10): GPU passthrough enabled in
+#     Apps → Settings, then add `runtime: nvidia` as shown here.
+#     Do NOT use the deploy.resources.reservations block — TrueNAS ignores it.
 #
-# Why this works with jellyfin-ffmpeg:
-#   Debian bookworm's stock ffmpeg is compiled WITHOUT --enable-nvenc, so
-#   h264_nvenc never appears even when GPU passthrough is working.
-#   jellyfin-ffmpeg ships a static build that includes h264_nvenc/vaapi/qsv.
-#   The NVENC runtime (.so libs) are injected at container start by
-#   nvidia-container-toolkit — nothing CUDA-version-specific is in the image.
+# Why jellyfin-ffmpeg is required:
+#   Debian bookworm's stock ffmpeg is compiled WITHOUT --enable-nvenc.
+#   jellyfin-ffmpeg ships a static build with h264_nvenc/vaapi/qsv baked in.
+#   The NVENC runtime libs are injected at container start by
+#   nvidia-container-toolkit — no CUDA version is baked into the image.
 
 services:
   playlistmanager:
+    # TrueNAS SCALE / standard Docker: use runtime + env vars, NOT deploy.resources
+    runtime: nvidia
     environment:
-      # Force h264_nvenc — skips the runtime probe which can fail if the
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: video,compute,utility
+
+      # Force h264_nvenc — skips the runtime probe which can race if the
       # NVIDIA kernel module hasn't fully initialised before the first
-      # Pluto session starts.  Remove this line to re-enable auto-detection.
+      # Pluto session starts.  Remove to re-enable auto-detection.
       PLUTO_X11_ENCODER: h264_nvenc
 
-      # nvenc initialisation adds ~2 s on the first encode.
+      # nvenc init adds ~2 s on first encode; give Chromium the extra headroom.
       PLUTO_X11_STARTUP_WAIT: 15
-
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu, video]

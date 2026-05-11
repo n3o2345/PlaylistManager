@@ -1,3 +1,9 @@
+# docker-compose.yml
+# Base compose file — works CPU-only out of the box.
+# For GPU acceleration overlay one of:
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.vaapi.yml up -d
+
 services:
   playlistmanager:
     container_name: playlistmanager
@@ -21,8 +27,12 @@ services:
       PLUTO_X11_FPS: 30
       PLUTO_X11_BITRATE: "2500k"
       PLUTO_X11_IDLE_TIMEOUT: 30
-      PLUTO_X11_STARTUP_WAIT: 5
-      # CHROMIUM_PATH: /usr/bin/chromium
+      # 12 s gives Chromium time to load Pluto's player and begin buffering
+      # before ffmpeg starts grabbing.  Increase to 18 on slow networks.
+      PLUTO_X11_STARTUP_WAIT: 12
+      # Real apt Chromium — no "Chrome for Testing" banner that Pluto detects.
+      # Playwright's bundled binary is only used as a fallback if this is unset.
+      CHROMIUM_PATH: /usr/bin/chromium
 
     healthcheck:
       test:
@@ -38,29 +48,3 @@ services:
 
 volumes:
   db_data:
-
-# =============================================================================
-# GPU profiles
-# Copy the relevant block into docker-compose.override.yml
-# =============================================================================
-#
-# NVIDIA (h264_nvenc) — requires nvidia-container-toolkit on host
-# services:
-#   playlistmanager:
-#     deploy:
-#       resources:
-#         reservations:
-#           devices:
-#             - driver: nvidia
-#               count: 1
-#               capabilities: [gpu, video]
-#
-# Intel/AMD VAAPI (h264_vaapi) — requires /dev/dri/renderD128 on host
-# services:
-#   playlistmanager:
-#     devices:
-#       - /dev/dri/renderD128:/dev/dri/renderD128
-#     group_add:
-#       - video
-#
-# CPU fallback (libx264) — no extra config needed; auto-detected

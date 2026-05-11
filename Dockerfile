@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # nvidia-container-toolkit — no CUDA version is baked into the image.
 #
 # To update: check https://github.com/jellyfin/jellyfin-ffmpeg/releases
-ARG JELLYFIN_FFMPEG_VERSION=7.0.2-9
+ARG JELLYFIN_FFMPEG_VERSION=7.1.3-6
 RUN ARCH=$(dpkg --print-architecture) \
   && wget -q -O /tmp/jf-ffmpeg.deb \
      "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v${JELLYFIN_FFMPEG_VERSION}/jellyfin-ffmpeg7_${JELLYFIN_FFMPEG_VERSION}-bookworm_${ARCH}.deb" \
