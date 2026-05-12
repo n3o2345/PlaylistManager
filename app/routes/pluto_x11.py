@@ -624,36 +624,48 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
         ),
     }
     chromium = _get_chromium_path()
+
+    # Each session gets its own throwaway profile directory so:
+    #   1. Chromium never fights over a singleton lock with a sibling session
+    #   2. Running as root doesn't cause $HOME write failures (code-0 clean exit)
+    #   3. No first-run / migration dialogs from a stale previous profile
+    user_data_dir = f"/tmp/pluto-x11-profile-{display_num}"
+    os.makedirs(user_data_dir, exist_ok=True)
+
     sess.browser_proc = subprocess.Popen(
         [
             chromium,
             "--no-sandbox",
             "--disable-setuid-sandbox",
+            # ── Per-session profile ───────────────────────────────────────────
+            # Must be set to avoid singleton-lock collisions between sessions and
+            # to prevent Chromium from exiting cleanly (code 0) when it cannot
+            # write its profile to the root home directory inside the container.
+            f"--user-data-dir={user_data_dir}",
             # ── GPU / rendering ───────────────────────────────────────────────
             # Use --disable-gpu (same as philo.js) rather than SwiftShader.
             # SwiftShader requires libvk_swiftshader.so / Vulkan libs that are
             # frequently absent in minimal Docker images and cause an immediate
-            # Chromium crash.  x11grab captures pixels from the Xvfb framebuffer
+            # crash.  x11grab captures pixels from the Xvfb framebuffer
             # regardless of the rendering backend, so software decode via the
             # CPU path is perfectly fine here.
             "--disable-gpu",
             "--disable-software-rasterizer",
             "--disable-gpu-sandbox",
             # ── Anti-automation detection ─────────────────────────────────────
-            # Removes navigator.webdriver=true.  Combined with using a real apt
-            # Chromium binary (not Playwright's "Chrome for Testing"), this is
-            # sufficient to pass Pluto TV's bot checks.
             "--disable-blink-features=AutomationControlled",
-            # UA must match the system chromium version; avoids UA/binary mismatch
-            # that some fingerprinting systems flag.  Chromium apt ≈ 124-126 on 24.04.
             "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             # ── Startup / first-run suppression ──────────────────────────────
             "--no-first-run",
             "--no-default-browser-check",
-            "--disable-component-update",       # no update nag dialogs
-            "--ash-no-nudges",                  # suppress system nudge popups
-            "--password-store=basic",           # no keyring prompts
+            "--disable-component-update",
+            "--ash-no-nudges",
+            "--password-store=basic",
+            "--disable-sync",                   # no Google account sync prompt
+            "--disable-background-networking",  # no update checks at startup
+            "--metrics-recording-only",         # suppress crash-reporter dialogs
+            "--no-pings",
             # ── General hardening ─────────────────────────────────────────────
             "--disable-dev-shm-usage",
             "--disable-extensions",
@@ -764,6 +776,21 @@ def _terminate_session(sess: _X11Session) -> None:
                 proc.kill()
             except Exception:
                 pass
+
+    # Clean up per-session throwaway Chromium profile
+    import shutil
+    profile_dir = f"/tmp/pluto-x11-profile-{sess.display_num}"
+    try:
+        shutil.rmtree(profile_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    # Clean up PulseAudio socket dir for this display
+    pulse_dir = f"/tmp/pulse-x11-{sess.display_num}"
+    try:
+        shutil.rmtree(pulse_dir, ignore_errors=True)
+    except Exception:
+        pass
 
     logger.info("[pluto-x11] session stopped ch=%s display=:%d",
                 sess.channel_id, sess.display_num)
