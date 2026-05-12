@@ -983,8 +983,13 @@ def pluto_x11_stream(channel_id: str):
         _client_ip(), channel_id, slug,
     )
 
+    source_config = channel.source.config or {}
+    pluto_email    = source_config.get('username') or None
+    pluto_password = source_config.get('password') or None
+
     return Response(
-        stream_with_context(stream_channel(channel_id, pluto_web_url)),
+        stream_with_context(stream_channel(channel_id, pluto_web_url,
+                                           email=pluto_email, password=pluto_password)),
         mimetype='video/mp2t',
         headers={
             'Cache-Control':    'no-cache',

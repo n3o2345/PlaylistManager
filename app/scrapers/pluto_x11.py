@@ -76,6 +76,8 @@ def main():
     display_w    = int(sys.argv[6])
     display_h    = int(sys.argv[7])
     startup_wait = int(sys.argv[8])
+    pluto_email    = sys.argv[9]  if len(sys.argv) > 9  and sys.argv[9]  != "none" else None
+    pluto_password = sys.argv[10] if len(sys.argv) > 10 and sys.argv[10] != "none" else None
 
     result_pipe  = os.fdopen(result_fd,  "w", buffering=1)
     control_pipe = os.fdopen(control_fd, "r")
@@ -137,6 +139,88 @@ def main():
             pass
 
     page.wait_for_timeout(2000)
+
+    # ── Login modal handling ────────────────────────────────────────────────
+    # Must happen BEFORE CSS injection so the modal still has pointer-events.
+    if pluto_email and pluto_password:
+        _login_attempted = False
+        _login_deadline  = time.monotonic() + 15
+        while time.monotonic() < _login_deadline:
+            try:
+                _has_modal = page.evaluate("""() => {
+                    const inp = document.querySelector(
+                        'input[type="email"], input[placeholder*="email" i], input[name*="email" i]');
+                    return !!(inp && inp.offsetParent !== null);
+                }""")
+            except Exception:
+                _has_modal = False
+            if _has_modal:
+                # Fill email
+                try:
+                    page.evaluate("""(em) => {
+                        const inp = document.querySelector(
+                            'input[type="email"], input[placeholder*="email" i], input[name*="email" i]');
+                        if (!inp) return;
+                        inp.focus();
+                        inp.value = em;
+                        inp.dispatchEvent(new Event('input',  {bubbles:true}));
+                        inp.dispatchEvent(new Event('change', {bubbles:true}));
+                    }""", pluto_email)
+                except Exception:
+                    pass
+                time.sleep(0.4)
+                # Click Next
+                try:
+                    page.evaluate("""() => {
+                        for (const btn of document.querySelectorAll('button')) {
+                            const t = (btn.textContent||''). trim().toLowerCase();
+                            if (t === 'next' || t === 'continue') { btn.click(); return; }
+                        }
+                    }""")
+                except Exception:
+                    pass
+                time.sleep(1.5)
+                # Fill password
+                _pw_deadline = time.monotonic() + 10
+                while time.monotonic() < _pw_deadline:
+                    try:
+                        _pw_ready = page.evaluate("""() => {
+                            const inp = document.querySelector('input[type="password"]');
+                            return !!(inp && inp.offsetParent !== null);
+                        }""")
+                    except Exception:
+                        _pw_ready = False
+                    if _pw_ready:
+                        try:
+                            page.evaluate("""(pw) => {
+                                const inp = document.querySelector('input[type="password"]');
+                                if (!inp) return;
+                                inp.focus();
+                                inp.value = pw;
+                                inp.dispatchEvent(new Event('input',  {bubbles:true}));
+                                inp.dispatchEvent(new Event('change', {bubbles:true}));
+                            }""", pluto_password)
+                        except Exception:
+                            pass
+                        time.sleep(0.4)
+                        # Click Sign In
+                        try:
+                            page.evaluate("""() => {
+                                for (const btn of document.querySelectorAll('button')) {
+                                    const t = (btn.textContent||''). trim().toLowerCase();
+                                    if (['sign in','log in','login','signin','submit'].includes(t))
+                                        { btn.click(); return; }
+                                }
+                            }""")
+                        except Exception:
+                            pass
+                        _login_attempted = True
+                        break
+                    time.sleep(0.5)
+                break
+            time.sleep(0.5)
+        if _login_attempted:
+            time.sleep(2)   # let Pluto redirect / close modal
 
     # Inject fullscreen CSS
     try:
@@ -558,7 +642,8 @@ def _get_launch_lock(channel_id: str) -> threading.Lock:
         return _launch_locks[channel_id]
 
 
-def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
+def _launch_session(channel_id: str, pluto_url: str,
+                   email: str | None = None, password: str | None = None) -> _X11Session:
     display_num = _alloc_display()
     encoder     = _detect_encoder()
 
@@ -603,6 +688,8 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
             str(result_w),   # fd: worker writes OK/ERR
             str(ctrl_r),     # fd: worker reads STOP
             str(DISPLAY_W), str(DISPLAY_H), str(STARTUP_WAIT),
+            email    or "none",
+            password or "none",
         ],
         pass_fds=(result_w, ctrl_r),
         stdout=subprocess.DEVNULL,
@@ -752,7 +839,8 @@ threading.Thread(target=_reaper, daemon=True, name="pluto-x11-reaper").start()
 # Public API
 # ---------------------------------------------------------------------------
 
-def stream_channel(channel_id: str, pluto_url: str) -> Iterator[bytes]:
+def stream_channel(channel_id: str, pluto_url: str,
+                   email: str | None = None, password: str | None = None) -> Iterator[bytes]:
     """
     Stream multiplexer — unlimited sessions.
 
@@ -779,7 +867,7 @@ def stream_channel(channel_id: str, pluto_url: str) -> Iterator[bytes]:
                 sess = None
 
         if sess is None:
-            new_sess = _launch_session(channel_id, pluto_url)
+            new_sess = _launch_session(channel_id, pluto_url, email=email, password=password)
             with _sessions_lock:
                 _sessions[channel_id] = new_sess
                 new_sess.readers += 1
