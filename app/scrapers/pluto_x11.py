@@ -55,7 +55,7 @@ DISPLAY_H       = int(os.environ.get("PLUTO_X11_HEIGHT",       "720"))
 FRAMERATE       = int(os.environ.get("PLUTO_X11_FPS",          "30"))
 BITRATE         = os.environ.get("PLUTO_X11_BITRATE",          "2500k")
 IDLE_TIMEOUT    = int(os.environ.get("PLUTO_X11_IDLE_TIMEOUT", "30"))
-STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "20"))
+STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "12"))
 FORCE_ENCODER   = os.environ.get("PLUTO_X11_ENCODER", "").strip().lower() or None
 CHUNK_SIZE      = 65536
 MAX_QUEUE_DEPTH = 64
@@ -131,6 +131,18 @@ def main():
             ),
             viewport={"width": display_w, "height": display_h},
         )
+        # Stealth: mask Playwright fingerprints before any page JS runs
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            if (!window.chrome) {
+                window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}};
+            }
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+        """)
         page = context.new_page()
     except Exception as e:
         result_pipe.write(f"ERR launch failed: {e}\n")
@@ -155,8 +167,13 @@ def main():
         except Exception:
             pass
 
-    # Give React time to hydrate and the video element to be inserted
-    page.wait_for_timeout(4000)
+    # Wait for React to hydrate: watch for a video element rather than sleeping
+    # blindly.  Falls back to a 3 s cap if the video element never appears
+    # (e.g. login wall is blocking).
+    try:
+        page.wait_for_selector("video", state="attached", timeout=6000)
+    except Exception:
+        page.wait_for_timeout(3000)
 
     # ── Login modal handling ────────────────────────────────────────────────
     # Must happen BEFORE CSS injection so the modal still has pointer-events.
@@ -312,9 +329,6 @@ def main():
         except Exception:
             pass
 
-    # Small pause to let fullscreen transition settle before ffmpeg starts grabbing
-    time.sleep(0.5)
-
     # Click play
     try:
         page.evaluate("""() => {
@@ -331,7 +345,11 @@ def main():
     except Exception:
         pass
 
-    # Wait for video to play
+    # Wait for video to play — 0.5 s polling, signal OK the moment video has
+    # a src and readyState >= 2 (enough data to start decoding).
+    # We do NOT wait for currentTime > 0 — that can take 5–10 s through ads.
+    # ffmpeg x11grab starts capturing immediately once we signal OK; any
+    # pre-roll that renders on screen is fine to capture.
     video_started = False
     deadline = time.monotonic() + startup_wait
     while time.monotonic() < deadline:
@@ -343,17 +361,21 @@ def main():
                 const buffered = v.buffered.length > 0 ? v.buffered.end(v.buffered.length-1) : 0;
                 return {found: true, readyState: v.readyState,
                         currentTime: v.currentTime, paused: v.paused,
-                        buffered: buffered, src: !!(v.src || v.currentSrc)};
+                        hasSrc: !!(v.src || v.currentSrc), buffered: buffered};
             }""")
             if r.get("found"):
-                rs = r.get("readyState", 0)
-                ct = r.get("currentTime", 0)
+                rs  = r.get("readyState", 0)
                 buf = r.get("buffered", 0)
-                # Accept: playing (not paused + has time), OR buffered data present
-                if (not r.get("paused", True) and (ct > 0 or buf > 0)) or (rs >= 3 and buf > 0):
+                has_src = r.get("hasSrc", False)
+                # Signal ready as soon as the element has a source and can decode
+                if has_src and rs >= 2:
                     video_started = True
                     break
-            # Nudge: try to dismiss any blocking dialog, then play
+                # Also accept if already buffering even without readyState advancing
+                if buf > 0.5:
+                    video_started = True
+                    break
+            # Nudge: dismiss blocking dialogs and retry play()
             try:
                 page.evaluate("""() => {
                     for (const btn of document.querySelectorAll('button,[role="button"]')) {
@@ -369,7 +391,7 @@ def main():
                 pass
         except Exception:
             pass
-        time.sleep(1)
+        time.sleep(0.5)
 
     result_pipe.write(f"OK video_started={video_started}\n")
     result_pipe.flush()
@@ -748,7 +770,7 @@ def _launch_session(channel_id: str, pluto_url: str,
          "-ac", "-nolisten", "tcp", "-nolisten", "unix"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    time.sleep(0.8)
+    time.sleep(0.4)
     if sess.xvfb_proc.poll() is not None:
         raise RuntimeError(f"Xvfb failed on display :{display_num}")
 
@@ -829,7 +851,7 @@ def _launch_session(channel_id: str, pluto_url: str,
     sess.ffmpeg_proc = subprocess.Popen(
         ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=ffmpeg_env,
     )
-    time.sleep(1)
+    time.sleep(0.3)
     if sess.ffmpeg_proc.poll() is not None:
         err = sess.ffmpeg_proc.stderr.read().decode(errors="replace").strip()
         raise RuntimeError(f"ffmpeg failed (encoder={encoder}): {err[:400]}")
@@ -1106,6 +1128,21 @@ def main():
             timezone_id="America/Chicago",
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
+        # ── Stealth: mask Playwright/automation fingerprints ────────────────
+        # Pluto uses Akamai bot-detection that checks navigator.webdriver,
+        # chrome.runtime, and other Playwright leaks even in non-headless mode.
+        # add_init_script runs before any page JS so patches land first.
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            if (!window.chrome) {
+                window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}};
+            }
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+        """)
         page = context.new_page()
     except Exception as e:
         try:
