@@ -69,6 +69,7 @@ _PW_WORKER_SCRIPT = r'''
 import os, sys, time, json
 
 def main():
+    display_num  = int(sys.argv[1])
     pulse_socket = sys.argv[2] if sys.argv[2] != "none" else None
     pluto_url    = sys.argv[3]
     result_fd    = int(sys.argv[4])
