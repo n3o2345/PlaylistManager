@@ -970,19 +970,56 @@ def main():
         fail(f"playwright not installed: {e}")
         return
 
+    # ── Spin up a temporary Xvfb display ───────────────────────────────────
+    # Running Chromium non-headless on a virtual framebuffer is the only
+    # reliable way to bypass Pluto's bot-detection.  Headless Chromium leaks
+    # fingerprints that Pluto uses to return a fake "Email or password is not
+    # correct" error even when credentials are correct.
+    import subprocess as _sp
+
+    login_display = None
+    xvfb_proc     = None
+    for _dn in range(100, 120):
+        if not os.path.exists(f"/tmp/.X{_dn}-lock"):
+            login_display = _dn
+            break
+    if login_display is None:
+        fail("no free Xvfb display for login")
+        return
+
+    try:
+        xvfb_proc = _sp.Popen(
+            ["Xvfb", f":{login_display}", "-screen", "0", "1280x800x24",
+             "-ac", "-nolisten", "tcp"],
+            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+        )
+        time.sleep(1.0)
+        if xvfb_proc.poll() is not None:
+            fail(f"Xvfb failed on display :{login_display}")
+            return
+    except FileNotFoundError:
+        fail("Xvfb not found — cannot run non-headless login")
+        return
+    except Exception as e:
+        fail(f"Xvfb launch error: {e}")
+        return
+
+    pw_env = dict(os.environ)
+    pw_env["DISPLAY"] = f":{login_display}"
+
     pw_args = [
         "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-        "--disable-gpu", "--no-first-run", "--no-default-browser-check",
-        # Critical: mask automation fingerprint
+        "--no-first-run", "--no-default-browser-check",
         "--disable-blink-features=AutomationControlled",
         "--autoplay-policy=no-user-gesture-required",
-        "--disable-features=IsolateOrigins,site-per-process",
         "--lang=en-US,en",
+        "--window-size=1280,800", "--window-position=0,0",
+        "--disable-infobars", "--disable-notifications",
     ]
 
     try:
         pw      = sync_playwright().start()
-        browser = pw.chromium.launch(headless=True, args=pw_args)
+        browser = pw.chromium.launch(headless=False, env=pw_env, args=pw_args)
         context = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -991,19 +1028,14 @@ def main():
             viewport={"width": 1280, "height": 800},
             locale="en-US",
             timezone_id="America/Chicago",
-            # Pretend to be a real desktop, not a headless bot
-            extra_http_headers={
-                "Accept-Language": "en-US,en;q=0.9",
-            },
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
-        # Mask navigator.webdriver before any page loads
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
-        """)
         page = context.new_page()
     except Exception as e:
+        try:
+            xvfb_proc.kill()
+        except Exception:
+            pass
         fail(f"launch failed: {e}")
         return
 
@@ -1253,6 +1285,12 @@ def main():
     finally:
         try:
             page.close(); context.close(); browser.close(); pw.stop()
+        except Exception:
+            pass
+        try:
+            if xvfb_proc is not None:
+                xvfb_proc.kill()
+                xvfb_proc.wait(timeout=5)
         except Exception:
             pass
 
