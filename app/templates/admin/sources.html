@@ -1346,6 +1346,164 @@
         </div>`;
     }
 
+    // ── Pluto TV — credential fields + Login & Verify panel ─────────────────
+    function renderPlutoConfig(sourceId, schema, values) {
+      const usernameField = schema.find(f => f.key === 'username') || { key: 'username', label: 'Pluto TV Username', field_type: 'text', required: true, placeholder: 'email@example.com', help_text: 'Required. Enter your Pluto TV login email.', secret: false };
+      const passwordField = schema.find(f => f.key === 'password') || { key: 'password', label: 'Pluto TV Password', field_type: 'password', required: true, help_text: 'Required. Enter your Pluto TV password.', secret: true };
+      const otherFields   = schema.filter(f => f.key !== 'username' && f.key !== 'password');
+
+      const usernameVal = values['username'] ?? '';
+      const passwordVal = values['password'] ?? '';
+
+      const renderOther = otherFields.map(f => {
+        const val = values[f.key] ?? f.default ?? '';
+        const req = f.required ? '<span class="req">*</span>' : '';
+        const help = f.help_text ? `<div class="help">${escapeHtml(f.help_text)}</div>` : '';
+        const inputType = f.field_type === 'password' ? 'password' : (f.field_type === 'number' ? 'number' : 'text');
+        const ph = f.placeholder ? `placeholder="${escapeHtml(f.placeholder)}"` : '';
+        return `<div class="field">
+          <label for="cfg-${sourceId}-${f.key}">${escapeHtml(f.label)}${req}</label>
+          <input type="${inputType}" id="cfg-${sourceId}-${f.key}" data-key="${f.key}"
+                 data-secret="${f.secret}" value="${escapeHtml(String(val))}" ${ph} autocomplete="off">
+          ${help}
+        </div>`;
+      }).join('');
+
+      return `
+        <div class="config-title">Source Settings</div>
+        <div class="config-note">Enter your Pluto TV credentials, then click <strong>Save Settings</strong>. Use <strong>Login &amp; Verify</strong> to confirm the X11 screen-grab login works and store the session cookies.</div>
+        <div class="fields-grid">
+          <div class="field">
+            <label for="cfg-${sourceId}-username">${escapeHtml(usernameField.label)} <span class="req">*</span></label>
+            <input type="text" id="cfg-${sourceId}-username" data-key="username"
+                   data-secret="false" value="${escapeHtml(usernameVal)}"
+                   placeholder="${escapeHtml(usernameField.placeholder || 'email@example.com')}" autocomplete="off">
+            <div class="help">${escapeHtml(usernameField.help_text || '')}</div>
+          </div>
+          <div class="field">
+            <label for="cfg-${sourceId}-password">${escapeHtml(passwordField.label)} <span class="req">*</span></label>
+            <input type="password" id="cfg-${sourceId}-password" data-key="password"
+                   data-secret="true" value="${escapeHtml(passwordVal)}"
+                   placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" autocomplete="new-password">
+            <div class="help">${escapeHtml(passwordField.help_text || '')}</div>
+          </div>
+          ${otherFields.length ? `<div class="field field-full" style="display:contents">${renderOther}</div>` : ''}
+        </div>
+
+        <div class="pluto-login-panel" id="pluto-login-panel-${sourceId}"
+             style="margin-top:1.1rem;border:1px solid var(--border);border-radius:8px;padding:1rem 1.1rem;background:var(--surface-2);">
+          <div style="font-size:0.82rem;font-weight:600;color:var(--text-soft);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.6rem;">🔐 X11 Session Login</div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.75rem;line-height:1.45;">
+            Performs a real headless browser login to Pluto TV and stores the session cookies on disk.
+            When valid cookies exist, X11 streams start instantly without showing a login modal.
+            Click <strong>Login &amp; Verify</strong> after saving credentials above.
+          </div>
+          <div id="pluto-login-cookie-status-${sourceId}" style="font-size:0.8rem;margin-bottom:0.7rem;color:var(--text-muted);">Checking cookie status…</div>
+          <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
+            <button class="btn btn-primary" type="button" id="pluto-login-btn-${sourceId}"
+                    onclick="plutoLoginVerify(${sourceId})">Login &amp; Verify</button>
+            <button class="btn btn-ghost" type="button"
+                    onclick="plutoLoginClear(${sourceId})" title="Delete stored session cookies">Clear Session</button>
+            <span class="config-status" id="pluto-login-status-${sourceId}"></span>
+          </div>
+        </div>
+
+        <div class="config-actions">
+          <span class="config-status" id="config-status-${sourceId}"></span>
+          <button class="btn btn-cancel" type="button" onclick="clearConfigFields(${sourceId})">Clear</button>
+          <button class="btn btn-run" type="button" onclick="saveSourceConfig(${sourceId})">Save Settings</button>
+        </div>`;
+    }
+
+    async function plutoLoadCookieStatus(sourceId) {
+      const el = document.getElementById(`pluto-login-cookie-status-${sourceId}`);
+      if (!el) return;
+      try {
+        const r = await fetch('/api/sources/pluto/login-status');
+        const d = await r.json();
+        if (d.ok) {
+          el.style.color = 'var(--success-soft)';
+          el.textContent = `\u2713 Session active \u2014 ${d.cookies} cookie${d.cookies !== 1 ? 's' : ''} stored. X11 streams will use these cookies.`;
+        } else {
+          el.style.color = 'var(--text-muted)';
+          el.textContent = `No active session (${d.reason || 'no cookies stored'}). Login below to enable cookie-based X11 streaming.`;
+        }
+      } catch (e) {
+        el.style.color = 'var(--text-muted)';
+        el.textContent = 'Could not check cookie status.';
+      }
+    }
+
+    async function plutoLoginVerify(sourceId) {
+      const emailEl    = document.getElementById(`cfg-${sourceId}-username`);
+      const passwordEl = document.getElementById(`cfg-${sourceId}-password`);
+      const statusEl   = document.getElementById(`pluto-login-status-${sourceId}`);
+      const btn        = document.getElementById(`pluto-login-btn-${sourceId}`);
+      const cookieSt   = document.getElementById(`pluto-login-cookie-status-${sourceId}`);
+
+      const email    = (emailEl?.value || '').trim();
+      const password = (passwordEl?.value || '').trim();
+
+      if (!email || !password) {
+        statusEl.className = 'config-status error';
+        statusEl.textContent = '\u2715 Enter username and password above first';
+        return;
+      }
+
+      btn.disabled = true;
+      statusEl.className = 'config-status';
+      statusEl.textContent = 'Logging in\u2026 (may take up to 60 s)';
+      if (cookieSt) { cookieSt.style.color = 'var(--text-muted)'; cookieSt.textContent = 'Login in progress\u2026'; }
+
+      try {
+        const r = await fetch('/api/sources/pluto/login-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const d = await r.json();
+        if (d.ok) {
+          statusEl.className = 'config-status ok';
+          statusEl.textContent = `\u2713 Logged in \u2014 ${d.cookies} cookie${d.cookies !== 1 ? 's' : ''} stored`;
+          if (cookieSt) {
+            cookieSt.style.color = 'var(--success-soft)';
+            cookieSt.textContent = `\u2713 Session active \u2014 ${d.cookies} cookie${d.cookies !== 1 ? 's' : ''} stored. X11 streams will use these cookies.`;
+          }
+        } else {
+          statusEl.className = 'config-status error';
+          statusEl.textContent = '\u2715 Login failed: ' + (d.error || 'unknown error');
+          if (cookieSt) {
+            cookieSt.style.color = 'var(--danger)';
+            cookieSt.textContent = 'Login failed \u2014 check credentials and try again.';
+          }
+        }
+      } catch (e) {
+        statusEl.className = 'config-status error';
+        statusEl.textContent = '\u2715 Request failed: ' + e.message;
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'config-status'; }, 8000);
+      }
+    }
+
+    async function plutoLoginClear(sourceId) {
+      const statusEl = document.getElementById(`pluto-login-status-${sourceId}`);
+      const cookieSt = document.getElementById(`pluto-login-cookie-status-${sourceId}`);
+      try {
+        await fetch('/api/sources/pluto/login-clear', { method: 'POST' });
+        statusEl.className = 'config-status ok';
+        statusEl.textContent = '\u2713 Session cleared';
+        if (cookieSt) {
+          cookieSt.style.color = 'var(--text-muted)';
+          cookieSt.textContent = 'No active session. Login below to enable cookie-based X11 streaming.';
+        }
+      } catch (e) {
+        statusEl.className = 'config-status error';
+        statusEl.textContent = '\u2715 ' + e.message;
+      }
+      setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'config-status'; }, 4000);
+    }
+
     function renderVidaaConfig(sourceId, schema, values) {
       const geoField = schema.find(f => f.key === 'geo') || {
         key: 'geo',
@@ -1471,6 +1629,9 @@
         if (container) {
           container.innerHTML = renderConfigFields(sourceId, sourceName, schema, values);
           container.classList.remove('hidden');
+          if (sourceName === 'pluto') {
+            plutoLoadCookieStatus(sourceId);
+          }
         }
       } catch (e) {
         if (badge) { badge.textContent = 'Config error'; badge.className = 'config-badge anon'; badge.style.display = ''; }
@@ -1506,6 +1667,8 @@
         return renderDistroConfig(sourceId, schema, values);
       } else if (sourceName === 'vidaa') {
         return renderVidaaConfig(sourceId, schema, values);
+      } else if (sourceName === 'pluto') {
+        return renderPlutoConfig(sourceId, schema, values);
       }
 
       const renderFieldSet = (fieldSchema) => fieldSchema.map(f => {

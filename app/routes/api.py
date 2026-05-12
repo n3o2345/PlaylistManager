@@ -2169,3 +2169,48 @@ def localnow_cities():
         return jsonify(s.search_cities(q))
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
+
+
+@api_bp.route('/sources/pluto/login-verify', methods=['POST'])
+def pluto_login_verify():
+    """
+    Perform a real headless Pluto TV login, store the cookies, and confirm
+    the login succeeded.  Called by the Sources settings UI after the user
+    enters credentials.
+
+    POST body: {"email": "...", "password": "..."}
+    Returns:   {"ok": true,  "cookies": N}          on success
+               {"ok": false, "error": "..."}         on failure
+    """
+    from ..scrapers.pluto_x11 import login_and_store_cookies, ENABLED as _X11_ENABLED
+    if not _X11_ENABLED:
+        return jsonify({'ok': False, 'error': 'Pluto X11 is disabled (PLUTO_X11_ENABLED=0)'}), 400
+    data     = request.get_json() or {}
+    email    = (data.get('email') or '').strip()
+    password = (data.get('password') or '').strip()
+    if not email or not password:
+        return jsonify({'ok': False, 'error': 'email and password are required'}), 400
+    result = login_and_store_cookies(email, password)
+    return jsonify(result), (200 if result['ok'] else 502)
+
+
+@api_bp.route('/sources/pluto/login-status', methods=['GET'])
+def pluto_login_status():
+    """
+    Returns the current cookie / login status without performing a login.
+    Used by the Sources UI on page load to show whether cookies are still valid.
+    """
+    from ..scrapers.pluto_x11 import verify_login, ENABLED as _X11_ENABLED
+    if not _X11_ENABLED:
+        return jsonify({'ok': False, 'reason': 'Pluto X11 disabled'})
+    return jsonify(verify_login())
+
+
+@api_bp.route('/sources/pluto/login-clear', methods=['POST'])
+def pluto_login_clear():
+    """Delete the stored Pluto cookies (e.g. on credential change or logout)."""
+    from ..scrapers.pluto_x11 import clear_cookies, ENABLED as _X11_ENABLED
+    if not _X11_ENABLED:
+        return jsonify({'ok': False, 'reason': 'Pluto X11 disabled'})
+    clear_cookies()
+    return jsonify({'ok': True})

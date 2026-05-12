@@ -59,6 +59,7 @@ STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "20"))
 FORCE_ENCODER   = os.environ.get("PLUTO_X11_ENCODER", "").strip().lower() or None
 CHUNK_SIZE      = 65536
 MAX_QUEUE_DEPTH = 64
+COOKIE_PATH     = os.environ.get("PLUTO_X11_COOKIE_PATH", "/tmp/pluto_x11_cookies.json")
 
 # ---------------------------------------------------------------------------
 # Playwright worker script — runs in a fresh child process, no gevent
@@ -68,7 +69,6 @@ _PW_WORKER_SCRIPT = r'''
 import os, sys, time, json
 
 def main():
-    display_num  = int(sys.argv[1])
     pulse_socket = sys.argv[2] if sys.argv[2] != "none" else None
     pluto_url    = sys.argv[3]
     result_fd    = int(sys.argv[4])
@@ -78,6 +78,7 @@ def main():
     startup_wait = int(sys.argv[8])
     pluto_email    = sys.argv[9]  if len(sys.argv) > 9  and sys.argv[9]  != "none" else None
     pluto_password = sys.argv[10] if len(sys.argv) > 10 and sys.argv[10] != "none" else None
+    cookie_path    = sys.argv[11] if len(sys.argv) > 11 and sys.argv[11] != "none" else None
 
     result_pipe  = os.fdopen(result_fd,  "w", buffering=1)
     control_pipe = os.fdopen(control_fd, "r")
@@ -129,6 +130,16 @@ def main():
         result_pipe.write(f"ERR launch failed: {e}\n")
         result_pipe.flush()
         return
+
+    # ── Inject stored cookies (skips login modal when valid) ────────────────
+    if cookie_path:
+        try:
+            with open(cookie_path) as _cf:
+                _stored = json.load(_cf)
+            if _stored:
+                context.add_cookies(_stored)
+        except Exception:
+            pass  # missing / corrupt cookie file — fall through to modal login
 
     try:
         page.goto(pluto_url, wait_until="domcontentloaded", timeout=30000)
@@ -690,6 +701,7 @@ def _launch_session(channel_id: str, pluto_url: str,
             str(DISPLAY_W), str(DISPLAY_H), str(STARTUP_WAIT),
             email    or "none",
             password or "none",
+            COOKIE_PATH,
         ],
         pass_fds=(result_w, ctrl_r),
         stdout=subprocess.DEVNULL,
@@ -834,6 +846,355 @@ def _cleanup_on_start() -> None:
 
 _cleanup_on_start()
 threading.Thread(target=_reaper, daemon=True, name="pluto-x11-reaper").start()
+
+# ---------------------------------------------------------------------------
+# Headless login worker script — used by login_and_store_cookies()
+# ---------------------------------------------------------------------------
+
+_PW_LOGIN_WORKER_SCRIPT = r'''
+import os, sys, time, json
+
+def main():
+    pluto_email    = sys.argv[1]
+    pluto_password = sys.argv[2]
+    cookie_path    = sys.argv[3]
+    result_fd      = int(sys.argv[4])
+
+    result_pipe = os.fdopen(result_fd, "w", buffering=1)
+
+    def fail(msg):
+        result_pipe.write(f"ERR {msg}\n")
+        result_pipe.flush()
+
+    def ok(msg=""):
+        result_pipe.write(f"OK {msg}\n")
+        result_pipe.flush()
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        fail(f"playwright not installed: {e}")
+        return
+
+    pw_args = [
+        "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+        "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+        "--disable-blink-features=AutomationControlled",
+    ]
+
+    try:
+        pw      = sync_playwright().start()
+        browser = pw.chromium.launch(headless=True, args=pw_args)
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            ),
+        )
+        page = context.new_page()
+    except Exception as e:
+        fail(f"launch failed: {e}")
+        return
+
+    try:
+        # Navigate to Pluto TV sign-in page
+        page.goto("https://pluto.tv/sign-in", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(2000)
+
+        # ── Email step ──────────────────────────────────────────────────────
+        deadline = time.monotonic() + 20
+        email_filled = False
+        while time.monotonic() < deadline:
+            try:
+                visible = page.evaluate("""() => {
+                    const inp = document.querySelector(
+                        'input[type="email"], input[placeholder*="email" i], input[name*="email" i]');
+                    return !!(inp && inp.offsetParent !== null);
+                }""")
+            except Exception:
+                visible = False
+            if visible:
+                try:
+                    page.locator('input[type="email"], input[placeholder*="email" i], input[name*="email" i]').first.fill(pluto_email)
+                    email_filled = True
+                except Exception:
+                    try:
+                        page.evaluate("""(em) => {
+                            const inp = document.querySelector(
+                                'input[type="email"], input[placeholder*="email" i], input[name*="email" i]');
+                            if (!inp) return;
+                            inp.focus(); inp.value = em;
+                            inp.dispatchEvent(new Event('input',  {bubbles:true}));
+                            inp.dispatchEvent(new Event('change', {bubbles:true}));
+                        }""", pluto_email)
+                        email_filled = True
+                    except Exception:
+                        pass
+                if email_filled:
+                    break
+            time.sleep(0.5)
+
+        if not email_filled:
+            fail("email field not found")
+            return
+
+        time.sleep(0.4)
+
+        # Click Next/Continue
+        try:
+            page.evaluate("""() => {
+                for (const btn of document.querySelectorAll('button')) {
+                    const t = (btn.textContent||'').trim().toLowerCase();
+                    if (t === 'next' || t === 'continue') { btn.click(); return; }
+                }
+            }""")
+        except Exception:
+            pass
+
+        time.sleep(1.5)
+
+        # ── Password step ───────────────────────────────────────────────────
+        pw_deadline = time.monotonic() + 15
+        pw_filled = False
+        while time.monotonic() < pw_deadline:
+            try:
+                visible = page.evaluate("""() => {
+                    const inp = document.querySelector('input[type="password"]');
+                    return !!(inp && inp.offsetParent !== null);
+                }""")
+            except Exception:
+                visible = False
+            if visible:
+                try:
+                    page.locator('input[type="password"]').first.fill(pluto_password)
+                    pw_filled = True
+                except Exception:
+                    try:
+                        page.evaluate("""(pw) => {
+                            const inp = document.querySelector('input[type="password"]');
+                            if (!inp) return;
+                            inp.focus(); inp.value = pw;
+                            inp.dispatchEvent(new Event('input',  {bubbles:true}));
+                            inp.dispatchEvent(new Event('change', {bubbles:true}));
+                        }""", pluto_password)
+                        pw_filled = True
+                    except Exception:
+                        pass
+                if pw_filled:
+                    break
+            time.sleep(0.5)
+
+        if not pw_filled:
+            fail("password field not found")
+            return
+
+        time.sleep(0.4)
+
+        # Click Sign In
+        try:
+            page.evaluate("""() => {
+                for (const btn of document.querySelectorAll('button')) {
+                    const t = (btn.textContent||'').trim().toLowerCase();
+                    if (['sign in','log in','login','signin','submit'].includes(t))
+                        { btn.click(); return; }
+                }
+            }""")
+        except Exception:
+            pass
+
+        # ── Wait for logged-in confirmation ─────────────────────────────────
+        # Pluto redirects to / or /on-demand after login.
+        # We verify by checking for an auth cookie or absence of sign-in UI.
+        logged_in = False
+        verify_deadline = time.monotonic() + 20
+        while time.monotonic() < verify_deadline:
+            time.sleep(1)
+            try:
+                url = page.url
+                # Pluto sets a 'plutotv-userToken' or '__session' cookie when logged in
+                cookies = context.cookies()
+                auth_cookie_names = {c["name"] for c in cookies}
+                has_auth = any(
+                    n in auth_cookie_names
+                    for n in ("plutotv-userToken", "__session", "pluto-session",
+                              "userToken", "authToken", "token")
+                )
+                # Also check: sign-in page is gone and we're on the main site
+                not_on_signin = "sign-in" not in url and "login" not in url.lower()
+                if has_auth or not_on_signin:
+                    # Double-check: look for a user avatar / account element
+                    has_account_ui = page.evaluate("""() => {
+                        return !!(
+                            document.querySelector('[data-testid*="account" i]') ||
+                            document.querySelector('[aria-label*="account" i]') ||
+                            document.querySelector('[class*="avatar" i]') ||
+                            document.querySelector('[class*="userMenu" i]') ||
+                            document.querySelector('[href*="/account"]')
+                        );
+                    }""")
+                    if has_auth or has_account_ui:
+                        logged_in = True
+                        break
+            except Exception:
+                pass
+
+        if not logged_in:
+            # Check for an error message on the page
+            try:
+                error_text = page.evaluate("""() => {
+                    const el = document.querySelector(
+                        '[class*="error" i], [role="alert"], [data-testid*="error" i]');
+                    return el ? el.innerText.trim() : '';
+                }""")
+            except Exception:
+                error_text = ""
+            fail(f"login verification failed — page={page.url}" +
+                 (f" error={error_text!r}" if error_text else ""))
+            return
+
+        # ── Persist cookies ─────────────────────────────────────────────────
+        try:
+            cookies = context.cookies()
+            with open(cookie_path, "w") as f:
+                json.dump(cookies, f)
+        except Exception as e:
+            fail(f"cookie save failed: {e}")
+            return
+
+        ok(f"cookies={len(cookies)}")
+
+    except Exception as e:
+        fail(f"unexpected error: {e}")
+    finally:
+        try:
+            page.close(); context.close(); browser.close(); pw.stop()
+        except Exception:
+            pass
+
+if __name__ == "__main__":
+    main()
+'''
+
+_PW_LOGIN_WORKER_PATH = "/tmp/pluto_pw_login_worker.py"
+with open(_PW_LOGIN_WORKER_PATH, "w") as _lf:
+    _lf.write(_PW_LOGIN_WORKER_SCRIPT)
+
+
+# ---------------------------------------------------------------------------
+# Public API — settings / login helpers
+# ---------------------------------------------------------------------------
+
+def login_and_store_cookies(email: str, password: str,
+                            cookie_path: str | None = None) -> dict:
+    """
+    Perform a real headless login to Pluto TV and persist the resulting
+    cookies to *cookie_path* (default: COOKIE_PATH).
+
+    Returns ``{"ok": True, "cookies": N}`` on success, or
+    ``{"ok": False, "error": "..."}`` on failure.
+
+    This is the function your settings page should call after the user
+    submits credentials.  It is synchronous and blocks for up to ~60 s.
+    """
+    cookie_path = cookie_path or COOKIE_PATH
+    result_r, result_w = os.pipe()
+
+    proc = subprocess.Popen(
+        [
+            sys.executable, _PW_LOGIN_WORKER_PATH,
+            email, password, cookie_path, str(result_w),
+        ],
+        pass_fds=(result_w,),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    os.close(result_w)
+
+    result_pipe = os.fdopen(result_r, "r")
+    line = result_pipe.readline()
+    result_pipe.close()
+
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+    if line.startswith("OK"):
+        detail = line[2:].strip()
+        n = 0
+        for part in detail.split():
+            if part.startswith("cookies="):
+                try:
+                    n = int(part.split("=", 1)[1])
+                except ValueError:
+                    pass
+        logger.info("[pluto-x11] login succeeded — %d cookies stored at %s", n, cookie_path)
+        return {"ok": True, "cookies": n}
+    else:
+        err = line.strip()
+        if not err:
+            stderr_out = ""
+            try:
+                stderr_out = proc.stderr.read().decode(errors="replace").strip()[:300]
+            except Exception:
+                pass
+            err = f"no output from worker" + (f" | stderr: {stderr_out}" if stderr_out else "")
+        logger.error("[pluto-x11] login failed: %s", err)
+        return {"ok": False, "error": err}
+
+
+def verify_login(cookie_path: str | None = None) -> dict:
+    """
+    Check whether stored cookies appear valid (file exists, not empty,
+    contains at least one recognisable Pluto auth cookie that has not
+    expired).
+
+    Returns ``{"ok": True, "cookies": N}`` or ``{"ok": False, "reason": "..."}``.
+    """
+    import json as _json
+    import time as _time
+
+    cookie_path = cookie_path or COOKIE_PATH
+    if not os.path.exists(cookie_path):
+        return {"ok": False, "reason": "no cookie file"}
+    try:
+        with open(cookie_path) as f:
+            cookies: list[dict] = _json.load(f)
+    except Exception as e:
+        return {"ok": False, "reason": f"cookie file unreadable: {e}"}
+
+    if not cookies:
+        return {"ok": False, "reason": "cookie file is empty"}
+
+    now = _time.time()
+    auth_names = {"plutotv-userToken", "__session", "pluto-session",
+                  "userToken", "authToken", "token"}
+    found_auth = False
+    for c in cookies:
+        if c.get("name") in auth_names:
+            expires = c.get("expires", -1)
+            if expires > 0 and expires < now:
+                return {"ok": False, "reason": f"auth cookie '{c['name']}' has expired"}
+            found_auth = True
+
+    if not found_auth:
+        # We have cookies but none are named auth tokens — treat as logged-in
+        # (Pluto may rename them) but flag it
+        logger.warning("[pluto-x11] verify_login: no known auth cookie names found; "
+                       "assuming valid (%d cookies)", len(cookies))
+
+    return {"ok": True, "cookies": len(cookies)}
+
+
+def clear_cookies(cookie_path: str | None = None) -> None:
+    """Delete the stored cookie file (e.g. on logout / credential change)."""
+    cookie_path = cookie_path or COOKIE_PATH
+    try:
+        os.remove(cookie_path)
+        logger.info("[pluto-x11] cookies cleared: %s", cookie_path)
+    except FileNotFoundError:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Public API
