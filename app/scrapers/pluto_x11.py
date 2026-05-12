@@ -108,6 +108,7 @@ def main():
         "--autoplay-policy=no-user-gesture-required",
         "--disable-blink-features=AutomationControlled",
         "--no-first-run", "--no-default-browser-check",
+        "--lang=en-US,en",
         "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
         "--disable-infobars", "--disable-notifications", "--hide-scrollbars",
         "--start-maximized", "--start-fullscreen",
@@ -206,7 +207,15 @@ def main():
         _login_deadline  = time.monotonic() + 20
 
         def _pw_type_into(selector, value):
-            """Type value into a React input keystroke-by-keystroke."""
+            """
+            Type value into a React input.
+
+            Uses page.keyboard.type() which routes through CDP insertText —
+            fully layout-independent so !@#$%^ all land correctly regardless
+            of the Xvfb keyboard layout.  Falls back to the React native-setter
+            JS trick if the locator interaction fails.
+            """
+            import random as _r
             try:
                 loc = page.locator(selector).first
                 loc.click(timeout=4000)
@@ -215,9 +224,29 @@ def main():
                 time.sleep(0.05)
                 loc.press("Backspace")
                 time.sleep(0.05)
-                import random as _r
-                loc.press_sequentially(value, delay=_r.randint(60, 110))
-                time.sleep(0.1)
+                # keyboard.type() uses CDP insertText — layout-independent,
+                # handles !@#$%^&*()_ without needing Shift key simulation
+                page.keyboard.type(value, delay=_r.randint(60, 110))
+                time.sleep(0.15)
+                return True
+            except Exception:
+                pass
+            # JS fallback: React native setter via prototype override
+            # Works when locator interaction itself fails (e.g. focus issues)
+            try:
+                first_sub = selector.split(",")[0].strip()
+                page.evaluate("""([sel, val]) => {
+                    const inp = document.querySelector(sel);
+                    if (!inp) return false;
+                    inp.focus();
+                    const setter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value').set;
+                    setter.call(inp, val);
+                    inp.dispatchEvent(new Event('input',  {bubbles: true}));
+                    inp.dispatchEvent(new Event('change', {bubbles: true}));
+                    inp.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true}));
+                    return true;
+                }""", [first_sub, value])
                 return True
             except Exception:
                 return False
@@ -826,6 +855,18 @@ def _launch_session(channel_id: str, pluto_url: str,
     if sess.xvfb_proc.poll() is not None:
         raise RuntimeError(f"Xvfb failed on display :{display_num}")
 
+    # Force US keyboard layout so Shift+1/2/3 maps to !/@/# correctly.
+    # Without this, special-char passwords get mistyped if the container's
+    # default XKBLAYOUT isn't 'us'.
+    try:
+        subprocess.run(
+            ["setxkbmap", "-display", f":{display_num}", "us"],
+            env={**os.environ, "DISPLAY": f":{display_num}"},
+            timeout=3, capture_output=True,
+        )
+    except Exception:
+        pass
+
     # ── 2. PulseAudio ──────────────────────────────────────────────────────
     sess.pulse_proc = _start_pulseaudio(display_num)
     ps = _pulse_socket(display_num)
@@ -1080,8 +1121,10 @@ def _fill_react_input(page, selector, value):
             _human_delay()
             target_loc.press("Backspace")
             _human_delay()
-            # Type each character with a small random inter-key delay
-            target_loc.press_sequentially(value, delay=random.randint(60, 120))
+            # keyboard.type() uses CDP insertText — fully layout-independent.
+            # Handles !@#$%^&*() without Shift key simulation, so the Xvfb
+            # keyboard layout cannot mangle special-char passwords.
+            page.keyboard.type(value, delay=random.randint(60, 120))
             _human_delay(0.1, 0.2)
             return True
         except Exception:
@@ -1189,6 +1232,15 @@ def main():
         if xvfb_proc.poll() is not None:
             fail(f"Xvfb failed on display :{login_display}")
             return
+        # Force US keyboard layout so !/@/# type correctly via Shift+1/2/3
+        try:
+            _sp.run(
+                ["setxkbmap", "-display", f":{login_display}", "us"],
+                env={**os.environ, "DISPLAY": f":{login_display}"},
+                timeout=3, capture_output=True,
+            )
+        except Exception:
+            pass
     except FileNotFoundError:
         fail("Xvfb not found — cannot run non-headless login")
         return
