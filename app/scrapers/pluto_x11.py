@@ -1009,27 +1009,45 @@ def main():
 
     try:
         # ── Step 1: Find the email form ─────────────────────────────────────
-        # Warm up with the homepage first so cookies/session are established
-        # before we hit the login page — reduces bot-detection triggers.
+        # IMPORTANT: Navigate via the homepage and click the Sign In link so
+        # Pluto assigns its msockid session token naturally through its own
+        # redirect chain.  Going directly to /check-email skips this and causes
+        # Pluto to reject the password submission as a bot/invalid session.
+        email_form_found = False
         try:
-            page.goto("https://pluto.tv/", wait_until="domcontentloaded", timeout=20000)
+            page.goto("https://pluto.tv/us/live-tv", wait_until="domcontentloaded", timeout=20000)
+            _human_delay(2.0, 3.0)
+            # Click the "Sign In" button/link in the nav
+            page.evaluate("""() => {
+                for (const el of document.querySelectorAll('a, button')) {
+                    const t = (el.textContent || '').trim().toLowerCase();
+                    const h = (el.href || '');
+                    if (t === 'sign in' || t === 'log in' ||
+                        h.includes('check-email') || h.includes('sign-in')) {
+                        el.click(); return;
+                    }
+                }
+            }""")
             _human_delay(1.5, 2.5)
+            page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=12000)
+            email_form_found = True
         except Exception:
             pass
 
-        email_form_found = False
-        for url in _SIGN_IN_URLS:
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=20000)
-            except Exception:
-                continue
-            _human_delay(0.8, 1.5)
-            try:
-                page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=10000)
-                email_form_found = True
-                break
-            except PWTimeout:
-                continue
+        # Fallback: go directly to check-email
+        if not email_form_found:
+            for url in _SIGN_IN_URLS:
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                except Exception:
+                    continue
+                _human_delay(0.8, 1.5)
+                try:
+                    page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=10000)
+                    email_form_found = True
+                    break
+                except PWTimeout:
+                    continue
 
         if not email_form_found:
             # Last resort: click Sign In from the homepage
@@ -1082,7 +1100,8 @@ def main():
         _human_delay(0.4, 0.8)
 
         # ── Step 3: Submit email, wait for password page ────────────────────
-        _click_button(page, ["continue", "next", "sign in", "log in", "submit"])
+        # Button on Pluto's email page is "Next"
+        _click_button(page, ["next", "continue", "sign in", "log in", "submit"])
         _human_delay(0.3, 0.6)
         try:
             page.locator(_EMAIL_SEL).first.press("Enter")
@@ -1125,9 +1144,10 @@ def main():
             fail(f"password page not reached — url={cur_url}")
             return
 
-        _human_delay(0.4, 0.8)
+        _human_delay(0.6, 1.2)
 
         # ── Step 4: Fill password ───────────────────────────────────────────
+        # Pluto's password field: placeholder="Please enter a password"
         if not _fill_react_input(page, _PW_SEL, pluto_password):
             fail("could not fill password field")
             return
@@ -1137,15 +1157,23 @@ def main():
             _human_delay(0.5, 1.0)
             _fill_react_input(page, _PW_SEL, pluto_password)
 
-        _human_delay(0.4, 0.8)
+        _human_delay(0.5, 1.0)
 
-        # ── Step 5: Submit ──────────────────────────────────────────────────
-        _click_button(page, ["sign in", "log in", "login", "signin", "submit", "continue"])
-        _human_delay(0.3, 0.6)
+        # ── Step 5: Submit — button text on password page is "Sign In" ──────
+        # Use get_by_role first (most reliable), fall back to JS click / Enter
+        submit_clicked = False
         try:
-            page.locator(_PW_SEL).first.press("Enter")
+            page.get_by_role("button", name="Sign In").click(timeout=5000)
+            submit_clicked = True
         except Exception:
             pass
+        if not submit_clicked:
+            _click_button(page, ["sign in", "log in", "login", "signin", "submit"])
+            _human_delay(0.3, 0.6)
+            try:
+                page.locator(_PW_SEL).first.press("Enter")
+            except Exception:
+                pass
 
         # ── Step 6: Confirm login succeeded ────────────────────────────────
         logged_in = False
