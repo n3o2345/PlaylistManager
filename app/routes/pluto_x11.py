@@ -315,39 +315,121 @@ def _start_pulseaudio(display_num: int) -> subprocess.Popen | None:
     """
     Start a per-display PulseAudio daemon with a null output sink.
     Returns the daemon process or None if PulseAudio is unavailable.
+
+    Uses a config-file approach (mirrors philo.js) for reliability when running
+    as root inside a container:
+      - auth-anonymous=1 avoids cookie-file permission errors
+      - explicit daemon.conf suppresses dbus/D-Bus noise
+      - polls the socket file for up to 8 s instead of a fixed 0.5 s sleep
     """
     socket_dir = f"/tmp/pulse-x11-{display_num}"
-    os.makedirs(socket_dir, exist_ok=True)
-    pa_socket = f"{socket_dir}/native"
+    pa_socket   = f"{socket_dir}/native"
+    pa_conf     = f"{socket_dir}/pa.conf"
+    daemon_conf = f"{socket_dir}/daemon.conf"
+    cookie_dir  = f"{socket_dir}/.config/pulse"
+    cookie_file = f"{socket_dir}/.pulse-cookie"
+
+    # Wipe any previous (crashed) instance so we start clean
+    try:
+        import shutil
+        shutil.rmtree(socket_dir, ignore_errors=True)
+    except Exception:
+        pass
+    os.makedirs(cookie_dir, exist_ok=True)
+
+    # Pre-create zero cookie files — avoids auth-init errors when running as root
+    _zero = bytes(256)
+    for _cf in (cookie_file, f"{cookie_dir}/cookie"):
+        try:
+            with open(_cf, "wb") as _fh:
+                _fh.write(_zero)
+        except Exception:
+            pass
+
+    # Minimal config: null sink + native unix socket, no auth required
+    try:
+        with open(pa_conf, "w") as _fh:
+            _fh.write(
+                f"load-module module-null-sink sink_name=out\n"
+                f"set-default-sink out\n"
+                f"set-default-source out.monitor\n"
+                f"load-module module-native-protocol-unix "
+                f"auth-anonymous=1 auth-cookie-enabled=0 socket={pa_socket}\n"
+            )
+        with open(daemon_conf, "w") as _fh:
+            _fh.write(
+                "default-sample-rate = 48000\n"
+                "exit-idle-time = -1\n"
+                "log-level = error\n"
+            )
+    except Exception as e:
+        logger.debug("[pluto-x11] PulseAudio config write failed: %s", e)
+        return None
+
+    pa_env = {
+        **os.environ,
+        "PULSE_RUNTIME_PATH":       socket_dir,
+        "HOME":                     socket_dir,
+        "XDG_RUNTIME_DIR":          socket_dir,
+        "PULSE_COOKIE":             cookie_file,
+        # Suppress dbus errors — expected in a headless container
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent",
+        "DBUS_SYSTEM_BUS_ADDRESS":  "unix:path=/nonexistent",
+    }
 
     try:
         proc = subprocess.Popen(
             [
                 "pulseaudio",
-                "--start",
                 "--daemonize=no",
-                f"--runtime-path={socket_dir}",
-                "--load=module-null-sink",
-                "--load=module-native-protocol-unix",
-                f"--load=module-native-protocol-unix socket={pa_socket}",
-                "-n",                   # no default config
-                "--exit-idle-time=-1",  # don't auto-exit
+                "--exit-idle-time=-1",
+                "--disallow-exit",
+                "-n",
+                f"--file={pa_conf}",
+                "--log-target=stderr",
             ],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env={**os.environ, "DISPLAY": f":{display_num}"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=pa_env,
         )
-        time.sleep(0.5)
-        if proc.poll() is not None:
-            logger.debug("[pluto-x11] PulseAudio exited immediately — audio disabled")
-            return None
-        logger.debug("[pluto-x11] PulseAudio started (display :%d socket=%s)", display_num, pa_socket)
-        return proc
     except FileNotFoundError:
         logger.debug("[pluto-x11] PulseAudio not installed — audio disabled")
         return None
     except Exception as e:
         logger.debug("[pluto-x11] PulseAudio start failed: %s", e)
         return None
+
+    # Poll until the socket exists (up to 8 s), then verify with pactl
+    ready = False
+    for _ in range(80):
+        time.sleep(0.1)
+        if proc.poll() is not None:
+            logger.debug("[pluto-x11] PulseAudio exited early — audio disabled")
+            return None
+        if not os.path.exists(pa_socket):
+            continue
+        try:
+            result = subprocess.run(
+                ["pactl", f"--server=unix:{pa_socket}", "list", "short", "sinks"],
+                capture_output=True, text=True, timeout=1,
+                env={**pa_env, "PULSE_SERVER": f"unix:{pa_socket}"},
+            )
+            if "out" in result.stdout:
+                ready = True
+                break
+        except Exception:
+            pass
+
+    if not ready:
+        logger.warning("[pluto-x11] PulseAudio sink not ready after 8 s — audio disabled")
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return None
+
+    logger.debug("[pluto-x11] PulseAudio started (display :%d socket=%s)", display_num, pa_socket)
+    return proc
 
 
 def _pulse_socket_path(display_num: int) -> str | None:
@@ -501,14 +583,17 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
         [
             chromium,
             "--no-sandbox",
-            # ── Software rendering ────────────────────────────────────────────
-            # Do NOT use --disable-gpu: it kills the entire GPU process which
-            # also kills the software video-decode path.  Pluto's HLS player
-            # uses a <video> element / MSE pipeline that lives in the GPU proc.
-            "--use-gl=swiftshader",             # software GL — no real GPU needed
-            "--use-angle=swiftshader",          # ANGLE software backend
-            "--disable-gpu-sandbox",            # required inside container/Xvfb
-            "--ignore-gpu-blocklist",           # irrelevant on Xvfb; suppress noise
+            "--disable-setuid-sandbox",
+            # ── GPU / rendering ───────────────────────────────────────────────
+            # Use --disable-gpu (same as philo.js) rather than SwiftShader.
+            # SwiftShader requires libvk_swiftshader.so / Vulkan libs that are
+            # frequently absent in minimal Docker images and cause an immediate
+            # Chromium crash.  x11grab captures pixels from the Xvfb framebuffer
+            # regardless of the rendering backend, so software decode via the
+            # CPU path is perfectly fine here.
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-gpu-sandbox",
             # ── Anti-automation detection ─────────────────────────────────────
             # Removes navigator.webdriver=true.  Combined with using a real apt
             # Chromium binary (not Playwright's "Chrome for Testing"), this is
@@ -538,7 +623,8 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
             f"--app={pluto_url}",
         ],
         env=browser_env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,   # capture stderr so crashes are visible in logs
     )
 
     # Wait for Chromium to load the page and the stream to begin.
@@ -546,7 +632,15 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
     time.sleep(STARTUP_WAIT)
 
     if sess.browser_proc.poll() is not None:
-        raise RuntimeError("Chromium exited immediately — check CHROMIUM_PATH and --no-sandbox support")
+        err = ""
+        try:
+            err = sess.browser_proc.stderr.read().decode(errors="replace").strip()
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"Chromium exited (code {sess.browser_proc.returncode})"
+            + (f": {err[:1000]}" if err else " — check CHROMIUM_PATH and GPU/display setup")
+        )
 
     # ── 4. ffmpeg x11grab → MPEG-TS ─────────────────────────────────────────
     ffmpeg_cmd = [
