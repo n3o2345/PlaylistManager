@@ -1,33 +1,43 @@
 """
 app/scrapers/pluto_x11.py
 
-Pluto TV X11 screen-grab streamer — bypasses SSAI commercial breaks entirely.
+Pluto TV X11 screen-grab streamer.
 
 Architecture
 ------------
   Xvfb  (:DISPLAY)
-    └─ Playwright Chromium  (non-headless, run in dedicated thread — gevent-safe)
+    └─ Playwright Chromium  (non-headless, run in a subprocess — gevent-safe)
          └─ CSS injection   (hides UI chrome, fullscreens <video>)
          └─ CDP fullscreen  (removes browser chrome)
          └─ keepalive loop  (dismisses overlays, resumes paused video)
-  PulseAudio null sink  (virtual audio device, per-session)
-  ffmpeg  -f x11grab + -f pulse → libx264/h264_nvenc/h264_vaapi → MPEG-TS → pipe
+  PulseAudio null sink  (virtual audio, per-session)
+  ffmpeg  x11grab + pulse → h264 → MPEG-TS pipe
     └─ _BroadcastPipe (fan-out to N concurrent readers)
 
-Notes
------
-- sync_playwright() cannot be called from a gevent-patched thread.  All
-  Playwright operations run inside a plain os.thread via _run_in_thread(),
-  which is unaffected by gevent's monkey-patching.
-- Display numbers are allocated via a file-backed cross-process counter so
-  multiple gunicorn worker processes never collide on the same Xvfb display.
+Gevent compatibility
+--------------------
+gevent monkey-patches threading.Thread so sync_playwright() still detects the
+asyncio event loop even inside a "new thread".  The only reliable fix is to run
+Playwright in a true child process via multiprocessing (spawn context), which
+has a clean interpreter state with no gevent patching and no asyncio loop.
+
+_PW_WORKER_SCRIPT is written to a temp file and executed as:
+    python3 /tmp/pluto_pw_worker.py <display> <pulse_socket|none> <url> <result_pipe_fd>
+
+The worker navigates Chromium, injects CSS, applies CDP fullscreen, waits for
+the video element to start playing, then writes "OK\n" (or "ERR <msg>\n") to
+the result pipe and blocks reading a "STOP\n" command from the control pipe.
+The main process reads the result, then sends "STOP\n" to tear down on cleanup.
 """
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import os
 import queue
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -45,35 +55,207 @@ DISPLAY_H       = int(os.environ.get("PLUTO_X11_HEIGHT",       "720"))
 FRAMERATE       = int(os.environ.get("PLUTO_X11_FPS",          "30"))
 BITRATE         = os.environ.get("PLUTO_X11_BITRATE",          "2500k")
 IDLE_TIMEOUT    = int(os.environ.get("PLUTO_X11_IDLE_TIMEOUT", "30"))
-STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "15"))
+STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "20"))
 FORCE_ENCODER   = os.environ.get("PLUTO_X11_ENCODER", "").strip().lower() or None
 CHUNK_SIZE      = 65536
 MAX_QUEUE_DEPTH = 64
 
 # ---------------------------------------------------------------------------
-# Gevent-safe thread runner
-# Playwright's sync API must not be called from gevent-patched greenlets.
-# _run_in_thread() executes a callable in a real OS thread and returns its
-# result (or re-raises its exception) in the calling greenlet.
+# Playwright worker script — runs in a fresh child process, no gevent
 # ---------------------------------------------------------------------------
 
-def _run_in_thread(fn, *args, **kwargs):
-    """Run fn(*args, **kwargs) in a real OS thread; block until done."""
-    result_box = [None]
-    exc_box    = [None]
+_PW_WORKER_SCRIPT = r'''
+import os, sys, time, json
 
-    def _worker():
+def main():
+    display_num  = int(sys.argv[1])
+    pulse_socket = sys.argv[2] if sys.argv[2] != "none" else None
+    pluto_url    = sys.argv[3]
+    result_fd    = int(sys.argv[4])
+    control_fd   = int(sys.argv[5])
+    display_w    = int(sys.argv[6])
+    display_h    = int(sys.argv[7])
+    startup_wait = int(sys.argv[8])
+
+    result_pipe  = os.fdopen(result_fd,  "w", buffering=1)
+    control_pipe = os.fdopen(control_fd, "r")
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        result_pipe.write(f"ERR playwright not installed: {e}\n")
+        result_pipe.flush()
+        return
+
+    pw_env = dict(os.environ)
+    pw_env["DISPLAY"] = f":{display_num}"
+    if pulse_socket:
+        pulse_dir = os.path.dirname(pulse_socket)
+        pw_env.update({
+            "PULSE_SERVER":       f"unix:{pulse_socket}",
+            "PULSE_RUNTIME_PATH": pulse_dir,
+            "HOME":               pulse_dir,
+            "XDG_RUNTIME_DIR":    pulse_dir,
+        })
+
+    pw_args = [
+        "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+        "--disable-gpu", "--disable-software-rasterizer",
+        "--autoplay-policy=no-user-gesture-required",
+        "--disable-blink-features=AutomationControlled",
+        "--no-first-run", "--no-default-browser-check",
+        "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+        "--disable-infobars", "--disable-notifications", "--hide-scrollbars",
+        "--start-maximized", "--start-fullscreen",
+        f"--window-size={display_w},{display_h}", "--window-position=0,0",
+        "--disable-session-crashed-bubble", "--hide-crash-restore-bubble",
+        "--disable-features=MediaSessionService,HardwareMediaKeyHandling",
+    ]
+
+    try:
+        pw      = sync_playwright().start()
+        browser = pw.chromium.launch(headless=False, env=pw_env, args=pw_args)
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": display_w, "height": display_h},
+        )
+        page = context.new_page()
+    except Exception as e:
+        result_pipe.write(f"ERR launch failed: {e}\n")
+        result_pipe.flush()
+        return
+
+    try:
+        page.goto(pluto_url, wait_until="domcontentloaded", timeout=30000)
+    except Exception:
         try:
-            result_box[0] = fn(*args, **kwargs)
-        except Exception as e:
-            exc_box[0] = e
+            page.goto(pluto_url, timeout=30000)
+        except Exception:
+            pass
 
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-    t.join()
-    if exc_box[0] is not None:
-        raise exc_box[0]
-    return result_box[0]
+    page.wait_for_timeout(2000)
+
+    # Inject fullscreen CSS
+    try:
+        page.evaluate("""() => {
+            if (document.getElementById('pluto-x11-fs')) return;
+            const s = document.createElement('style');
+            s.id = 'pluto-x11-fs';
+            s.textContent = `
+                [class*="overlay"],[class*="Overlay"],[class*="controls"],[class*="Controls"],
+                [class*="nav"],[class*="Nav"],[class*="header"],[class*="Header"],
+                [class*="banner"],[class*="Badge"],[class*="modal"],[class*="Modal"],
+                [class*="stillWatching"],[class*="adOverlay"],[class*="pauseScreen"],
+                [class*="endCard"],[class*="spinner"],[class*="Spinner"],
+                [class*="loading"],[class*="Loading"]
+                { opacity:0!important; visibility:hidden!important; pointer-events:none!important; }
+                video { position:fixed!important; top:0!important; left:0!important;
+                        width:100vw!important; height:100vh!important; z-index:99999!important;
+                        object-fit:cover!important; background:#000!important; }
+                body  { background:#000!important; overflow:hidden!important; margin:0!important; }
+                *     { cursor:none!important; }
+            `;
+            document.head.appendChild(s);
+            const v = document.querySelector('video');
+            if (v) { v.muted = false; v.volume = 1.0; if (v.paused) v.play().catch(()=>{}); }
+        }""")
+    except Exception:
+        pass
+
+    # CDP fullscreen
+    try:
+        cdp = context.new_cdp_session(page)
+        win = cdp.send("Browser.getWindowForTarget")
+        cdp.send("Browser.setWindowBounds",
+                 {"windowId": win["windowId"], "bounds": {"windowState": "fullscreen"}})
+        cdp.detach()
+    except Exception:
+        try:
+            page.keyboard.press("F11")
+        except Exception:
+            pass
+
+    # Click play
+    try:
+        page.evaluate("""() => {
+            for (const sel of ['[aria-label*="Play" i]','[aria-label*="Watch" i]',
+                               'button[class*="play" i]','[class*="playButton"]',
+                               '[data-testid*="play" i]']) {
+                for (const el of document.querySelectorAll(sel)) {
+                    if (el.offsetParent !== null) { el.click(); return; }
+                }
+            }
+            const v = document.querySelector('video');
+            if (v && v.paused) v.play().catch(()=>{});
+        }""")
+    except Exception:
+        pass
+
+    # Wait for video to play
+    video_started = False
+    deadline = time.monotonic() + startup_wait
+    while time.monotonic() < deadline:
+        try:
+            r = page.evaluate("""() => {
+                const v = document.querySelector('video');
+                if (!v) return {found: false};
+                if (v.muted) { v.muted = false; v.volume = 1.0; }
+                return {found: true, readyState: v.readyState,
+                        currentTime: v.currentTime, paused: v.paused};
+            }""")
+            if r.get("found") and r.get("readyState", 0) >= 2:
+                if not r.get("paused", True) or r.get("currentTime", 0) > 0:
+                    video_started = True
+                    break
+            if r.get("paused"):
+                try:
+                    page.evaluate("() => { const v=document.querySelector('video'); if(v) v.play(); }")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        time.sleep(1)
+
+    result_pipe.write(f"OK video_started={video_started}\n")
+    result_pipe.flush()
+
+    # Keepalive loop until STOP received
+    while True:
+        try:
+            line = control_pipe.readline()
+            if not line or line.strip() == "STOP":
+                break
+        except Exception:
+            break
+        # keepalive tick
+        try:
+            page.evaluate("""() => {
+                for (const btn of document.querySelectorAll('button')) {
+                    const t = (btn.textContent||'').toLowerCase();
+                    if (['still watching','continue','yes','keep watching'].some(w=>t.includes(w)))
+                        { btn.click(); return; }
+                }
+                const v = document.querySelector('video');
+                if (v) { v.muted=false; v.volume=1.0; if(v.paused||v.ended) v.play(); }
+            }""")
+        except Exception:
+            pass
+
+    try:
+        page.close(); context.close(); browser.close(); pw.stop()
+    except Exception:
+        pass
+
+if __name__ == "__main__":
+    main()
+'''
+
+_PW_WORKER_PATH = "/tmp/pluto_pw_worker.py"
+with open(_PW_WORKER_PATH, "w") as _f:
+    _f.write(_PW_WORKER_SCRIPT)
 
 # ---------------------------------------------------------------------------
 # GPU encoder detection
@@ -113,7 +295,7 @@ def _detect_encoder() -> str:
                 _ENCODER_CACHE = "h264_nvenc"
                 return _ENCODER_CACHE
             except Exception as e:
-                logger.warning("[pluto-x11] h264_nvenc probe failed: %s", e)
+                logger.warning("[pluto-x11] h264_nvenc failed: %s", e)
         if "h264_vaapi" in out and os.path.exists("/dev/dri/renderD128"):
             try:
                 subprocess.check_call(
@@ -129,7 +311,7 @@ def _detect_encoder() -> str:
                 return _ENCODER_CACHE
             except Exception:
                 pass
-        logger.info("[pluto-x11] encoder: libx264 (CPU fallback)")
+        logger.info("[pluto-x11] encoder: libx264 (CPU)")
         _ENCODER_CACHE = "libx264"
         return _ENCODER_CACHE
 
@@ -137,14 +319,14 @@ def _detect_encoder() -> str:
 def _build_video_encoder_args(encoder: str) -> list[str]:
     if encoder == "h264_nvenc":
         return ["-c:v", "h264_nvenc", "-preset", "p2", "-tune", "ll",
-                "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double_bitrate(BITRATE),
+                "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double(BITRATE),
                 "-g", str(FRAMERATE * 2), "-rc", "cbr"]
     if encoder == "h264_vaapi":
         return ["-c:v", "h264_vaapi",
-                "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double_bitrate(BITRATE),
+                "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double(BITRATE),
                 "-g", str(FRAMERATE * 2)]
     return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-            "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double_bitrate(BITRATE),
+            "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double(BITRATE),
             "-g", str(FRAMERATE * 2)]
 
 
@@ -156,7 +338,7 @@ def _vaapi_device_args(encoder: str) -> list[str]:
     return ["-vaapi_device", "/dev/dri/renderD128"] if encoder == "h264_vaapi" else []
 
 
-def _double_bitrate(b: str) -> str:
+def _double(b: str) -> str:
     try:
         s = b[-1].lower()
         if s in ("k", "m"):
@@ -189,7 +371,7 @@ def _alloc_display() -> int:
             fcntl.lockf(lf, fcntl.LOCK_UN)
 
 # ---------------------------------------------------------------------------
-# PulseAudio (mirrors philo.js _createPulseSink)
+# PulseAudio
 # ---------------------------------------------------------------------------
 
 def _start_pulseaudio(display_num: int) -> subprocess.Popen | None:
@@ -237,7 +419,7 @@ def _start_pulseaudio(display_num: int) -> subprocess.Popen | None:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=pa_env,
         )
     except FileNotFoundError:
-        logger.debug("[pluto-x11] PulseAudio not installed — no audio")
+        logger.debug("[pluto-x11] PulseAudio not installed")
         return None
 
     for _ in range(80):
@@ -258,7 +440,7 @@ def _start_pulseaudio(display_num: int) -> subprocess.Popen | None:
         except Exception:
             pass
 
-    logger.warning("[pluto-x11] PulseAudio not ready after 8 s — no audio")
+    logger.warning("[pluto-x11] PulseAudio not ready after 8 s")
     try:
         proc.kill()
     except Exception:
@@ -271,7 +453,7 @@ def _pulse_socket(display_num: int) -> str | None:
     return p if os.path.exists(p) else None
 
 # ---------------------------------------------------------------------------
-# Broadcast pipe (fan-out)
+# Broadcast pipe
 # ---------------------------------------------------------------------------
 
 class _BroadcastPipe:
@@ -328,7 +510,7 @@ class _BroadcastPipe:
         self._stopped = True
 
 # ---------------------------------------------------------------------------
-# Session dataclass
+# Session
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -338,217 +520,17 @@ class _X11Session:
     display_num: int
     encoder:     str
 
-    xvfb_proc:      subprocess.Popen | None = field(default=None, repr=False)
-    pulse_proc:     subprocess.Popen | None = field(default=None, repr=False)
-    pw_browser:     object | None           = field(default=None, repr=False)
-    pw_context:     object | None           = field(default=None, repr=False)
-    pw_page:        object | None           = field(default=None, repr=False)
-    ffmpeg_proc:    subprocess.Popen | None = field(default=None, repr=False)
-    broadcast:      _BroadcastPipe   | None = field(default=None, repr=False)
-    keepalive_stop: threading.Event  | None = field(default=None, repr=False)
+    xvfb_proc:    subprocess.Popen | None = field(default=None, repr=False)
+    pulse_proc:   subprocess.Popen | None = field(default=None, repr=False)
+    pw_proc:      subprocess.Popen | None = field(default=None, repr=False)
+    pw_ctrl_w:    object | None           = field(default=None, repr=False)
+    ffmpeg_proc:  subprocess.Popen | None = field(default=None, repr=False)
+    broadcast:    _BroadcastPipe   | None = field(default=None, repr=False)
 
     readers:   int   = 0
     last_read: float = field(default_factory=time.monotonic)
     started:   bool  = False
     lock:      threading.Lock = field(default_factory=threading.Lock)
-
-# ---------------------------------------------------------------------------
-# Playwright helpers — ALL called via _run_in_thread (gevent-safe)
-# ---------------------------------------------------------------------------
-
-_FULLSCREEN_CSS = """
-    [class*="overlay"],[class*="Overlay"],[class*="controls"],[class*="Controls"],
-    [class*="nav"],[class*="Nav"],[class*="header"],[class*="Header"],
-    [class*="banner"],[class*="Badge"],[class*="modal"],[class*="Modal"],
-    [class*="tooltip"],[class*="Tooltip"],[class*="uiLayer"],[class*="PlayerUI"],
-    [class*="stillWatching"],[class*="adOverlay"],[class*="pauseScreen"],
-    [class*="endCard"],[class*="spinner"],[class*="Spinner"],
-    [class*="loading"],[class*="Loading"]
-    { opacity:0!important; visibility:hidden!important; pointer-events:none!important; }
-    video { position:fixed!important; top:0!important; left:0!important;
-            width:100vw!important; height:100vh!important; z-index:99999!important;
-            object-fit:cover!important; background:#000!important; }
-    body  { background:#000!important; overflow:hidden!important; margin:0!important; }
-    *     { cursor:none!important; }
-"""
-
-_INJECT_CSS_JS = f"""() => {{
-    if (document.getElementById('pluto-x11-fs')) return;
-    const s = document.createElement('style');
-    s.id = 'pluto-x11-fs';
-    s.textContent = `{_FULLSCREEN_CSS}`;
-    document.head.appendChild(s);
-    const v = document.querySelector('video');
-    if (v) {{ v.muted = false; v.volume = 1.0; if (v.paused) v.play().catch(()=>{{}}); }}
-}}"""
-
-_CLICK_PLAY_JS = """() => {
-    for (const sel of ['[aria-label*="Play" i]','[aria-label*="Watch" i]',
-                        'button[class*="play" i]','[class*="playButton"]',
-                        '[data-testid*="play" i]']) {
-        for (const el of document.querySelectorAll(sel)) {
-            if (el.offsetParent !== null) { el.click(); return; }
-        }
-    }
-    const v = document.querySelector('video');
-    if (v && v.paused) v.play().catch(()=>{});
-}"""
-
-_VIDEO_STATE_JS = """() => {
-    const v = document.querySelector('video');
-    if (!v) return {found: false};
-    if (v.muted) { v.muted = false; v.volume = 1.0; }
-    return {found: true, readyState: v.readyState,
-            currentTime: v.currentTime, paused: v.paused};
-}"""
-
-_KEEPALIVE_JS = """() => {
-    for (const btn of document.querySelectorAll('button')) {
-        const t = (btn.textContent || '').toLowerCase();
-        if (['still watching','continue','yes','keep watching'].some(w => t.includes(w))) {
-            btn.click(); return {action:'overlay'};
-        }
-    }
-    const v = document.querySelector('video');
-    if (v) { v.muted = false; v.volume = 1.0;
-              if (v.paused || v.ended) { v.play(); return {action:'resumed'}; } }
-    return {action:'ok'};
-}"""
-
-
-def _pw_launch_and_navigate(pluto_url: str, display_num: int,
-                             pulse_socket: str | None) -> dict:
-    """
-    Run entirely in a real OS thread (via _run_in_thread).
-    Launches Playwright Chromium on the given Xvfb display, navigates to
-    pluto_url, injects CSS, applies CDP fullscreen, waits for video to play.
-    Returns {"browser", "context", "page"} on success.
-    """
-    from playwright.sync_api import sync_playwright
-
-    pw_env = {
-        **os.environ,
-        "DISPLAY": f":{display_num}",
-    }
-    if pulse_socket:
-        pulse_dir = os.path.dirname(pulse_socket)
-        pw_env.update({
-            "PULSE_SERVER":      f"unix:{pulse_socket}",
-            "PULSE_RUNTIME_PATH": pulse_dir,
-            "HOME":               pulse_dir,
-            "XDG_RUNTIME_DIR":    pulse_dir,
-        })
-
-    pw_args = [
-        "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-        "--disable-gpu", "--disable-software-rasterizer",
-        "--autoplay-policy=no-user-gesture-required",
-        "--disable-blink-features=AutomationControlled",
-        "--no-first-run", "--no-default-browser-check",
-        "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
-        "--disable-infobars", "--disable-notifications", "--hide-scrollbars",
-        "--start-maximized", "--start-fullscreen",
-        f"--window-size={DISPLAY_W},{DISPLAY_H}", "--window-position=0,0",
-        "--disable-session-crashed-bubble", "--hide-crash-restore-bubble",
-        "--disable-features=MediaSessionService,HardwareMediaKeyHandling",
-    ]
-
-    pw = sync_playwright().start()
-    try:
-        browser = pw.chromium.launch(headless=False, env=pw_env, args=pw_args)
-    except Exception as e:
-        pw.stop()
-        raise RuntimeError(f"Playwright launch failed: {e}")
-
-    context = browser.new_context(
-        user_agent=(
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-        ),
-        viewport={"width": DISPLAY_W, "height": DISPLAY_H},
-    )
-    page = context.new_page()
-
-    logger.info("[pluto-x11] navigating to %s (display :%d)", pluto_url, display_num)
-    try:
-        page.goto(pluto_url, wait_until="domcontentloaded", timeout=30000)
-    except Exception:
-        try:
-            page.goto(pluto_url, timeout=30000)
-        except Exception:
-            pass
-
-    page.wait_for_timeout(2000)
-
-    # Inject fullscreen CSS
-    try:
-        page.evaluate(_INJECT_CSS_JS)
-    except Exception as e:
-        logger.debug("[pluto-x11] CSS inject: %s", e)
-
-    # CDP fullscreen
-    try:
-        cdp = context.new_cdp_session(page)
-        win = cdp.send("Browser.getWindowForTarget")
-        cdp.send("Browser.setWindowBounds",
-                 {"windowId": win["windowId"], "bounds": {"windowState": "fullscreen"}})
-        cdp.detach()
-    except Exception:
-        try:
-            page.keyboard.press("F11")
-        except Exception:
-            pass
-
-    # Click play
-    try:
-        page.evaluate(_CLICK_PLAY_JS)
-    except Exception:
-        pass
-
-    # Wait for video to actually play (up to STARTUP_WAIT seconds)
-    video_started = False
-    deadline = time.monotonic() + STARTUP_WAIT
-    while time.monotonic() < deadline:
-        try:
-            r = page.evaluate(_VIDEO_STATE_JS)
-            if r.get("found") and r.get("readyState", 0) >= 2:
-                if not r.get("paused", True) or r.get("currentTime", 0) > 0:
-                    video_started = True
-                    logger.info("[pluto-x11] video playing: t=%.1fs", r.get("currentTime", 0))
-                    break
-            if r.get("paused"):
-                page.evaluate(_CLICK_PLAY_JS)
-        except Exception:
-            pass
-        time.sleep(1)
-
-    if not video_started:
-        logger.warning("[pluto-x11] video not confirmed playing after %ds — grabbing anyway",
-                       STARTUP_WAIT)
-
-    return {"browser": browser, "context": context, "page": page, "pw": pw}
-
-
-def _pw_keepalive_tick(page) -> None:
-    """Single keepalive tick — called from the keepalive thread via _run_in_thread."""
-    try:
-        page.evaluate(_KEEPALIVE_JS)
-    except Exception:
-        pass
-
-
-def _pw_close(browser, context, page, pw) -> None:
-    """Close Playwright objects — called from _terminate_session via _run_in_thread."""
-    for obj, method in [(page, "close"), (context, "close"), (browser, "close")]:
-        try:
-            if obj is not None:
-                getattr(obj, method)()
-        except Exception:
-            pass
-    try:
-        pw.stop()
-    except Exception:
-        pass
 
 # ---------------------------------------------------------------------------
 # Session lifecycle
@@ -573,7 +555,7 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
         display_num = _alloc_display()
         sess.display_num = display_num
     else:
-        raise RuntimeError("No free Xvfb display found after 20 attempts")
+        raise RuntimeError("No free Xvfb display after 20 attempts")
 
     sess.xvfb_proc = subprocess.Popen(
         ["Xvfb", f":{display_num}",
@@ -589,26 +571,52 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
     sess.pulse_proc = _start_pulseaudio(display_num)
     ps = _pulse_socket(display_num)
 
-    # ── 3. Playwright (in real OS thread — gevent-safe) ────────────────────
-    pw_result = _run_in_thread(_pw_launch_and_navigate, pluto_url, display_num, ps)
-    sess.pw_browser = pw_result["browser"]
-    sess.pw_context = pw_result["context"]
-    sess.pw_page    = pw_result["page"]
-    sess._pw        = pw_result["pw"]   # keep pw alive
+    # ── 3. Playwright worker (subprocess — immune to gevent patching) ───────
+    # Pipe pair: result (worker→parent) and control (parent→worker)
+    result_r, result_w = os.pipe()
+    ctrl_r,   ctrl_w   = os.pipe()
 
-    # ── 4. Keepalive thread ────────────────────────────────────────────────
-    stop = threading.Event()
-    sess.keepalive_stop = stop
-    page_ref = sess.pw_page
+    pw_proc = subprocess.Popen(
+        [
+            sys.executable, _PW_WORKER_PATH,
+            str(display_num),
+            ps or "none",
+            pluto_url,
+            str(result_w),   # fd: worker writes OK/ERR
+            str(ctrl_r),     # fd: worker reads STOP
+            str(DISPLAY_W), str(DISPLAY_H), str(STARTUP_WAIT),
+        ],
+        pass_fds=(result_w, ctrl_r),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    os.close(result_w)
+    os.close(ctrl_r)
 
-    def _keepalive():
-        while not stop.wait(30):
-            _run_in_thread(_pw_keepalive_tick, page_ref)
+    sess.pw_proc   = pw_proc
+    sess.pw_ctrl_w = os.fdopen(ctrl_w, "w", buffering=1)
 
-    threading.Thread(target=_keepalive, daemon=True,
-                     name=f"pluto-x11-ka-{channel_id}").start()
+    # Wait for worker to signal ready (or fail)
+    result_pipe = os.fdopen(result_r, "r")
+    logger.info("[pluto-x11] waiting for Playwright worker (up to %ds)...", STARTUP_WAIT + 10)
+    line = result_pipe.readline()
+    result_pipe.close()
 
-    # ── 5. ffmpeg x11grab → MPEG-TS ────────────────────────────────────────
+    if not line.startswith("OK"):
+        err_out = ""
+        try:
+            pw_proc.wait(timeout=3)
+            err_out = pw_proc.stderr.read().decode(errors="replace").strip()
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"Playwright worker failed: {line.strip() or 'no output'}"
+            + (f" | stderr: {err_out[:300]}" if err_out else "")
+        )
+
+    logger.info("[pluto-x11] Playwright worker ready: %s", line.strip())
+
+    # ── 4. ffmpeg x11grab → MPEG-TS ────────────────────────────────────────
     has_audio = ps is not None
     ffmpeg_cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error",
@@ -642,9 +650,9 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
 
     logger.info(
         "[pluto-x11] session started ch=%s display=:%d encoder=%s "
-        "pid_xvfb=%d pid_ff=%d audio=%s",
+        "pid_xvfb=%d pid_pw=%d pid_ff=%d audio=%s",
         channel_id, display_num, encoder,
-        sess.xvfb_proc.pid, sess.ffmpeg_proc.pid,
+        sess.xvfb_proc.pid, pw_proc.pid, sess.ffmpeg_proc.pid,
         "on" if has_audio else "off",
     )
     return sess
@@ -653,18 +661,25 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
 def _terminate_session(sess: _X11Session) -> None:
     import shutil
 
-    if sess.keepalive_stop:
-        sess.keepalive_stop.set()
-
     if sess.broadcast:
         sess.broadcast.stop()
 
-    # Close Playwright in its own thread
-    pw = getattr(sess, "_pw", None)
-    _run_in_thread(_pw_close, sess.pw_browser, sess.pw_context, sess.pw_page, pw)
+    # Tell Playwright worker to exit cleanly
+    if sess.pw_ctrl_w:
+        try:
+            sess.pw_ctrl_w.write("STOP\n")
+            sess.pw_ctrl_w.flush()
+            sess.pw_ctrl_w.close()
+        except Exception:
+            pass
+    if sess.pw_proc and sess.pw_proc.poll() is None:
+        try:
+            sess.pw_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            sess.pw_proc.kill()
 
     for proc in (sess.ffmpeg_proc, sess.pulse_proc, sess.xvfb_proc):
-        if proc and isinstance(proc, subprocess.Popen) and proc.poll() is None:
+        if proc and proc.poll() is None:
             try:
                 proc.terminate()
                 proc.wait(timeout=5)
@@ -681,7 +696,7 @@ def _terminate_session(sess: _X11Session) -> None:
                 sess.channel_id, sess.display_num)
 
 # ---------------------------------------------------------------------------
-# Background reaper
+# Reaper + startup cleanup
 # ---------------------------------------------------------------------------
 
 def _reaper() -> None:
@@ -690,11 +705,10 @@ def _reaper() -> None:
         to_evict: list[str] = []
         with _sessions_lock:
             for cid, sess in _sessions.items():
-                idle = time.monotonic() - sess.last_read
-                if sess.readers == 0 and idle > IDLE_TIMEOUT:
+                if sess.readers == 0 and time.monotonic() - sess.last_read > IDLE_TIMEOUT:
                     to_evict.append(cid)
                 elif sess.broadcast and not sess.broadcast.is_alive():
-                    logger.warning("[pluto-x11] ffmpeg died for ch=%s — evicting", cid)
+                    logger.warning("[pluto-x11] ffmpeg died ch=%s — evicting", cid)
                     to_evict.append(cid)
         for cid in to_evict:
             with _sessions_lock:
@@ -723,7 +737,7 @@ threading.Thread(target=_reaper, daemon=True, name="pluto-x11-reaper").start()
 
 def stream_channel(channel_id: str, pluto_url: str) -> Iterator[bytes]:
     if not ENABLED:
-        logger.error("[pluto-x11] disabled (PLUTO_X11_ENABLED=0)")
+        logger.error("[pluto-x11] disabled")
         return
 
     with _sessions_lock:
@@ -736,8 +750,6 @@ def stream_channel(channel_id: str, pluto_url: str) -> Iterator[bytes]:
         sess.readers += 1
 
     reader_q = sess.broadcast.add_reader()
-    logger.debug("[pluto-x11] reader attached ch=%s readers=%d", channel_id, sess.readers)
-
     try:
         while True:
             try:
@@ -753,7 +765,6 @@ def stream_channel(channel_id: str, pluto_url: str) -> Iterator[bytes]:
         with _sessions_lock:
             sess.readers = max(0, sess.readers - 1)
             sess.last_read = time.monotonic()
-        logger.debug("[pluto-x11] reader detached ch=%s readers=%d", channel_id, sess.readers)
 
 
 def active_sessions() -> list[dict]:
