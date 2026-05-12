@@ -175,48 +175,90 @@ def main():
     except Exception:
         page.wait_for_timeout(3000)
 
+    # ── Pre-login modal: "Continue / Limit features" upsell ────────────────
+    # This modal appears BEFORE the sign-in form and blocks it entirely.
+    # Must be dismissed first.  The "Continue" button leads to the sign-in
+    # form; "Limit features" skips login (we don't want that).
+    _upsell_deadline = time.monotonic() + 8
+    while time.monotonic() < _upsell_deadline:
+        try:
+            _dismissed = page.evaluate("""() => {
+                for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                    const t = (btn.textContent || '').trim().toLowerCase();
+                    // Click "Continue" (not "Limit features") to get to sign-in
+                    if (t === 'continue' && btn.offsetParent !== null) {
+                        btn.click(); return true;
+                    }
+                }
+                return false;
+            }""")
+            if _dismissed:
+                time.sleep(1.0)  # let sign-in form animate in
+                break
+        except Exception:
+            pass
+        time.sleep(0.4)
+
     # ── Login modal handling ────────────────────────────────────────────────
     # Must happen BEFORE CSS injection so the modal still has pointer-events.
     if pluto_email and pluto_password:
         _login_attempted = False
-        _login_deadline  = time.monotonic() + 15
+        _login_deadline  = time.monotonic() + 20
+
+        def _pw_type_into(selector, value):
+            """Type value into a React input keystroke-by-keystroke."""
+            try:
+                loc = page.locator(selector).first
+                loc.click(timeout=4000)
+                time.sleep(0.1)
+                loc.press("Control+a")
+                time.sleep(0.05)
+                loc.press("Backspace")
+                time.sleep(0.05)
+                import random as _r
+                loc.press_sequentially(value, delay=_r.randint(60, 110))
+                time.sleep(0.1)
+                return True
+            except Exception:
+                return False
+
+        _EMAIL_SEL = ('input[placeholder="Enter your email"], '
+                      'input[type="email"], input[name="email"], '
+                      'input[placeholder*="email" i]')
+        _PW_SEL    = ('input[name="password"], input[id="password"], '
+                      'input[type="password"], input[placeholder*="password" i]')
+
         while time.monotonic() < _login_deadline:
             try:
-                _has_modal = page.evaluate("""() => {
-                    const inp = document.querySelector(
-                        'input[type="email"], input[placeholder*="email" i], input[name*="email" i]');
+                _has_email = page.evaluate(f"""() => {{
+                    const inp = document.querySelector('{_EMAIL_SEL.split(",")[0].strip()}');
                     return !!(inp && inp.offsetParent !== null);
-                }""")
+                }}""")
             except Exception:
-                _has_modal = False
-            if _has_modal:
-                # Fill email
-                try:
-                    page.evaluate("""(em) => {
-                        const inp = document.querySelector(
-                            'input[type="email"], input[placeholder*="email" i], input[name*="email" i]');
-                        if (!inp) return;
-                        inp.focus();
-                        inp.value = em;
-                        inp.dispatchEvent(new Event('input',  {bubbles:true}));
-                        inp.dispatchEvent(new Event('change', {bubbles:true}));
-                    }""", pluto_email)
-                except Exception:
-                    pass
-                time.sleep(0.4)
+                _has_email = False
+
+            if _has_email:
+                # Fill email with keystroke typing (React synthetic events)
+                _pw_type_into(_EMAIL_SEL, pluto_email)
+                time.sleep(0.3)
                 # Click Next
                 try:
                     page.evaluate("""() => {
-                        for (const btn of document.querySelectorAll('button')) {
-                            const t = (btn.textContent||''). trim().toLowerCase();
-                            if (t === 'next' || t === 'continue') { btn.click(); return; }
+                        for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                            const t = (btn.textContent||'').trim().toLowerCase();
+                            if (t === 'next' || t === 'continue') {
+                                if (btn.offsetParent !== null) { btn.click(); return; }
+                            }
                         }
                     }""")
                 except Exception:
                     pass
-                time.sleep(1.5)
-                # Fill password
-                _pw_deadline = time.monotonic() + 10
+                try:
+                    page.locator(_EMAIL_SEL).first.press("Enter")
+                except Exception:
+                    pass
+                # Wait for password field
+                _pw_deadline = time.monotonic() + 12
                 while time.monotonic() < _pw_deadline:
                     try:
                         _pw_ready = page.evaluate("""() => {
@@ -226,34 +268,44 @@ def main():
                     except Exception:
                         _pw_ready = False
                     if _pw_ready:
-                        try:
-                            page.evaluate("""(pw) => {
-                                const inp = document.querySelector('input[type="password"]');
-                                if (!inp) return;
-                                inp.focus();
-                                inp.value = pw;
-                                inp.dispatchEvent(new Event('input',  {bubbles:true}));
-                                inp.dispatchEvent(new Event('change', {bubbles:true}));
-                            }""", pluto_password)
-                        except Exception:
-                            pass
+                        time.sleep(0.4)
+                        _pw_type_into(_PW_SEL, pluto_password)
                         time.sleep(0.4)
                         # Click Sign In
                         try:
-                            page.evaluate("""() => {
-                                for (const btn of document.querySelectorAll('button')) {
-                                    const t = (btn.textContent||''). trim().toLowerCase();
-                                    if (['sign in','log in','login','signin','submit'].includes(t))
-                                        { btn.click(); return; }
-                                }
-                            }""")
+                            page.get_by_role("button", name="Sign In").click(timeout=3000)
                         except Exception:
-                            pass
+                            try:
+                                page.evaluate("""() => {
+                                    for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                                        const t = (btn.textContent||'').trim().toLowerCase();
+                                        if (['sign in','log in','login','signin','submit'].includes(t)
+                                            && btn.offsetParent !== null) { btn.click(); return; }
+                                    }
+                                }""")
+                            except Exception:
+                                pass
+                            try:
+                                page.locator(_PW_SEL).first.press("Enter")
+                            except Exception:
+                                pass
                         _login_attempted = True
                         break
                     time.sleep(0.5)
                 break
+
+            # If no email field, check for the "Continue" upsell again
+            try:
+                page.evaluate("""() => {
+                    for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                        const t = (btn.textContent || '').trim().toLowerCase();
+                        if (t === 'continue' && btn.offsetParent !== null) { btn.click(); return; }
+                    }
+                }""")
+            except Exception:
+                pass
             time.sleep(0.5)
+
         if _login_attempted:
             time.sleep(2)   # let Pluto redirect / close modal
 
@@ -950,13 +1002,21 @@ _PW_LOGIN_WORKER_SCRIPT = r'''
 import os, sys, time, json, random
 
 # Selectors for Pluto's React sign-in form.
+# Ordered by specificity — most specific first so locator().first picks correctly.
+# DOM inspection shows:
+#   email:    <input placeholder="Enter your email" type="email" ...>
+#   password: <input name="password" type="password" placeholder="Please enter a password" id="password">
 _EMAIL_SEL = (
-    'input[name="email"], input[type="email"], '
+    'input[placeholder="Enter your email"], '
+    'input[type="email"], '
+    'input[name="email"], '
     'input[placeholder*="email" i], input[id*="email" i]'
 )
 _PW_SEL = (
-    'input[name="password"], input[type="password"], '
-    'input[placeholder*="password" i], input[id*="password" i]'
+    'input[name="password"], '
+    'input[id="password"], '
+    'input[type="password"], '
+    'input[placeholder*="password" i]'
 )
 
 # Pluto's two-step login flow:
@@ -987,27 +1047,53 @@ def _fill_react_input(page, selector, value):
     Fill a React-controlled input by typing keystroke-by-keystroke with a
     human-like random delay.  This is the only reliable method for React
     controlled inputs — direct .value assignment bypasses onChange.
+
+    Iterates through comma-separated selectors and uses the first one that
+    is visible and enabled to avoid mis-targeting hidden inputs.
     """
+    # Try each sub-selector independently so we pick the visible one
+    sub_selectors = [s.strip() for s in selector.split(",")]
+    target_loc = None
+    for sub in sub_selectors:
+        try:
+            loc = page.locator(sub).first
+            if loc.is_visible(timeout=1000) and loc.is_enabled(timeout=500):
+                target_loc = loc
+                break
+        except Exception:
+            continue
+
+    if target_loc is None:
+        # Fallback: use the full selector, take first
+        try:
+            target_loc = page.locator(selector).first
+        except Exception:
+            pass
+
+    if target_loc:
+        try:
+            target_loc.scroll_into_view_if_needed(timeout=3000)
+            target_loc.click(timeout=5000)
+            _human_delay(0.15, 0.3)
+            # Clear any pre-filled value
+            target_loc.press("Control+a")
+            _human_delay()
+            target_loc.press("Backspace")
+            _human_delay()
+            # Type each character with a small random inter-key delay
+            target_loc.press_sequentially(value, delay=random.randint(60, 120))
+            _human_delay(0.1, 0.2)
+            return True
+        except Exception:
+            pass
+
+    # Fallback: React native setter via JS (works when locator interaction fails)
     try:
-        loc = page.locator(selector).first
-        loc.click(timeout=5000)
-        _human_delay(0.1, 0.25)
-        # Clear any pre-filled value
-        loc.press("Control+a")
-        _human_delay()
-        loc.press("Backspace")
-        _human_delay()
-        # Type each character with a small random inter-key delay
-        loc.press_sequentially(value, delay=random.randint(60, 120))
-        _human_delay(0.1, 0.2)
-        return True
-    except Exception:
-        pass
-    # Fallback: React native setter (works when locator times out)
-    try:
+        first_sub = sub_selectors[0]
         page.evaluate("""([sel, val]) => {
             const inp = document.querySelector(sel);
             if (!inp) return false;
+            inp.focus();
             const setter = Object.getOwnPropertyDescriptor(
                 window.HTMLInputElement.prototype, 'value').set;
             setter.call(inp, val);
@@ -1015,7 +1101,7 @@ def _fill_react_input(page, selector, value):
             inp.dispatchEvent(new Event('change', {bubbles: true}));
             inp.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true}));
             return true;
-        }""", [selector.split(",")[0].strip(), value])
+        }""", [first_sub, value])
         return True
     except Exception:
         return False
@@ -1038,7 +1124,15 @@ def _click_button(page, labels):
 
 
 def _verify_field_value(page, selector, expected):
-    """Return True if the input currently holds the expected value."""
+    """
+    Return True if the input currently holds the expected value.
+    NOTE: Playwright always returns '' for input[type="password"] (security
+    restriction) — always return True for password fields to avoid a spurious
+    double-fill that would corrupt the password.
+    """
+    # If selector targets a password field, skip verification
+    if 'password' in selector.lower() or 'type="password"' in selector.lower():
+        return True
     try:
         actual = page.locator(selector).first.input_value(timeout=3000)
         return actual == expected
@@ -1182,7 +1276,29 @@ def main():
                     }
                 }
             }""")
-            _human_delay(1.5, 2.5)
+            _human_delay(1.0, 1.8)
+            # ── Dismiss "Continue / Limit features" upsell modal ───────────
+            # This modal appears between the nav Sign In click and the email
+            # form.  Must click "Continue" (not "Limit features") to reach login.
+            _upsell_t = time.monotonic() + 5
+            while time.monotonic() < _upsell_t:
+                try:
+                    _got_it = page.evaluate("""() => {
+                        for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                            const t = (btn.textContent || '').trim().toLowerCase();
+                            if (t === 'continue' && btn.offsetParent !== null) {
+                                btn.click(); return true;
+                            }
+                        }
+                        return false;
+                    }""")
+                    if _got_it:
+                        _human_delay(0.8, 1.2)
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.3)
+            _human_delay(0.5, 1.0)
             page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=12000)
             email_form_found = True
         except Exception:
@@ -1196,6 +1312,17 @@ def main():
                 except Exception:
                     continue
                 _human_delay(0.8, 1.5)
+                # Dismiss Continue modal if it appears on direct navigation too
+                try:
+                    page.evaluate("""() => {
+                        for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                            const t = (btn.textContent || '').trim().toLowerCase();
+                            if (t === 'continue' && btn.offsetParent !== null) { btn.click(); return; }
+                        }
+                    }""")
+                    _human_delay(0.5, 0.8)
+                except Exception:
+                    pass
                 try:
                     page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=10000)
                     email_form_found = True
@@ -1254,13 +1381,21 @@ def main():
         _human_delay(0.4, 0.8)
 
         # ── Step 3: Submit email, wait for password page ────────────────────
-        # Button on Pluto's email page is "Next"
-        _click_button(page, ["next", "continue", "sign in", "log in", "submit"])
-        _human_delay(0.3, 0.6)
+        # Button on Pluto's email page text is exactly "Next"
+        _next_clicked = False
         try:
-            page.locator(_EMAIL_SEL).first.press("Enter")
+            page.get_by_role("button", name="Next").click(timeout=4000)
+            _next_clicked = True
         except Exception:
             pass
+        if not _next_clicked:
+            _click_button(page, ["next"])
+            _human_delay(0.3, 0.6)
+        if not _next_clicked:
+            try:
+                page.locator(_EMAIL_SEL).first.press("Enter")
+            except Exception:
+                pass
 
         # Wait for the URL to change to the password step
         # (more reliable than a fixed sleep)
