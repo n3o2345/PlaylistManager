@@ -536,8 +536,19 @@ class _X11Session:
 # Session lifecycle
 # ---------------------------------------------------------------------------
 
-_sessions:     dict[str, _X11Session] = {}
-_sessions_lock = threading.Lock()
+_sessions:      dict[str, _X11Session] = {}
+_sessions_lock  = threading.Lock()
+# Per-channel launch lock: prevents duplicate sessions when two requests arrive
+# for the same channel while _launch_session is still blocking.
+_launch_locks:  dict[str, threading.Lock] = {}
+_launch_locks_lock = threading.Lock()
+
+
+def _get_launch_lock(channel_id: str) -> threading.Lock:
+    with _launch_locks_lock:
+        if channel_id not in _launch_locks:
+            _launch_locks[channel_id] = threading.Lock()
+        return _launch_locks[channel_id]
 
 
 def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
@@ -626,8 +637,7 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
     ]
     ffmpeg_cmd += _vaapi_device_args(encoder)
     if has_audio:
-        ffmpeg_cmd += ["-f", "pulse", "-ac", "2", "-ar", "48000",
-                       "-server", f"unix:{ps}", "-i", "default"]
+        ffmpeg_cmd += ["-f", "pulse", "-ac", "2", "-ar", "48000", "-i", "default"]
     ffmpeg_cmd += _build_vf_chain(encoder)
     ffmpeg_cmd += _build_video_encoder_args(encoder)
     ffmpeg_cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if has_audio else ["-an"]
@@ -736,18 +746,37 @@ threading.Thread(target=_reaper, daemon=True, name="pluto-x11-reaper").start()
 # ---------------------------------------------------------------------------
 
 def stream_channel(channel_id: str, pluto_url: str) -> Iterator[bytes]:
+    """
+    Stream multiplexer — unlimited sessions.
+
+    - Same channel already streaming → attach as a reader to the existing
+      session (one Xvfb+Chromium+ffmpeg shared among all viewers).
+    - New channel → spin up a new session.
+    - Sessions are torn down by the reaper after IDLE_TIMEOUT seconds with
+      no active readers.
+    """
     if not ENABLED:
         logger.error("[pluto-x11] disabled")
         return
 
-    with _sessions_lock:
-        sess = _sessions.get(channel_id)
-        if sess is None or (sess.broadcast and not sess.broadcast.is_alive()):
-            if sess:
-                _terminate_session(sess)
-            sess = _launch_session(channel_id, pluto_url)
-            _sessions[channel_id] = sess
-        sess.readers += 1
+    launch_lock = _get_launch_lock(channel_id)
+    with launch_lock:
+        with _sessions_lock:
+            sess = _sessions.get(channel_id)
+            if sess is not None and sess.broadcast and sess.broadcast.is_alive():
+                sess.readers += 1
+            else:
+                if sess is not None:
+                    _terminate_session(sess)
+                    del _sessions[channel_id]
+                sess = None
+
+        if sess is None:
+            new_sess = _launch_session(channel_id, pluto_url)
+            with _sessions_lock:
+                _sessions[channel_id] = new_sess
+                new_sess.readers += 1
+            sess = new_sess
 
     reader_q = sess.broadcast.add_reader()
     try:
