@@ -103,7 +103,7 @@ def main():
 
     pw_args = [
         "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-        "--disable-gpu",
+        # NOTE: do NOT add --disable-gpu — it prevents video from rendering on Xvfb
         "--autoplay-policy=no-user-gesture-required",
         "--disable-blink-features=AutomationControlled",
         "--no-first-run", "--no-default-browser-check",
@@ -113,6 +113,11 @@ def main():
         f"--window-size={display_w},{display_h}", "--window-position=0,0",
         "--disable-session-crashed-bubble", "--hide-crash-restore-bubble",
         "--disable-features=MediaSessionService,HardwareMediaKeyHandling",
+        # Software rendering for Xvfb (no real GPU available)
+        "--use-gl=swiftshader",
+        "--use-angle=swiftshader-webgl",
+        "--ignore-gpu-blocklist",
+        "--enable-unsafe-webgpu",
     ]
 
     try:
@@ -149,7 +154,8 @@ def main():
         except Exception:
             pass
 
-    page.wait_for_timeout(2000)
+    # Give React time to hydrate and the video element to be inserted
+    page.wait_for_timeout(4000)
 
     # ── Login modal handling ────────────────────────────────────────────────
     # Must happen BEFORE CSS injection so the modal still has pointer-events.
@@ -233,7 +239,7 @@ def main():
         if _login_attempted:
             time.sleep(2)   # let Pluto redirect / close modal
 
-    # Inject fullscreen CSS
+    # ── Fullscreen CSS: hide all UI chrome, make video fill the display ───────
     try:
         page.evaluate("""() => {
             if (document.getElementById('pluto-x11-fs')) return;
@@ -251,16 +257,37 @@ def main():
                         width:100vw!important; height:100vh!important; z-index:99999!important;
                         object-fit:cover!important; background:#000!important; }
                 body  { background:#000!important; overflow:hidden!important; margin:0!important; }
+                html  { background:#000!important; }
                 *     { cursor:none!important; }
             `;
             document.head.appendChild(s);
-            const v = document.querySelector('video');
-            if (v) { v.muted = false; v.volume = 1.0; if (v.paused) v.play().catch(()=>{}); }
         }""")
     except Exception:
         pass
 
-    # CDP fullscreen
+    # ── Unmute and resume audio context ────────────────────────────────────
+    # Must be done via a simulated user gesture (page.evaluate fires in a
+    # user-gesture context in non-headless Chromium).
+    try:
+        page.evaluate("""() => {
+            // Resume any suspended AudioContext (autoplay policy)
+            if (window.AudioContext || window.webkitAudioContext) {
+                try {
+                    const ac = new (window.AudioContext || window.webkitAudioContext)();
+                    if (ac.state === 'suspended') ac.resume();
+                } catch(e) {}
+            }
+            const v = document.querySelector('video');
+            if (v) {
+                v.muted  = false;
+                v.volume = 1.0;
+                if (v.paused) v.play().catch(() => {});
+            }
+        }""")
+    except Exception:
+        pass
+
+    # ── CDP fullscreen: remove browser chrome so video fills entire Xvfb ───
     try:
         cdp = context.new_cdp_session(page)
         win = cdp.send("Browser.getWindowForTarget")
@@ -272,6 +299,9 @@ def main():
             page.keyboard.press("F11")
         except Exception:
             pass
+
+    # Small pause to let fullscreen transition settle before ffmpeg starts grabbing
+    time.sleep(0.5)
 
     # Click play
     try:
@@ -743,7 +773,9 @@ def _launch_session(channel_id: str, pluto_url: str,
     ]
     ffmpeg_cmd += _vaapi_device_args(encoder)
     if has_audio:
-        ffmpeg_cmd += ["-f", "pulse", "-ac", "2", "-ar", "48000", "-i", "default"]
+        # Use the explicit monitor source name, not "default" — "default" maps
+        # to the sink input, not the monitor output, and often captures silence.
+        ffmpeg_cmd += ["-f", "pulse", "-ac", "2", "-ar", "48000", "-i", "out.monitor"]
     ffmpeg_cmd += _build_vf_chain(encoder)
     ffmpeg_cmd += _build_video_encoder_args(encoder)
     ffmpeg_cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if has_audio else ["-an"]
