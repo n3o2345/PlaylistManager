@@ -100,7 +100,7 @@ def main():
 
     pw_args = [
         "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-        "--disable-gpu", "--disable-software-rasterizer",
+        "--disable-gpu",
         "--autoplay-policy=no-user-gesture-required",
         "--disable-blink-features=AutomationControlled",
         "--no-first-run", "--no-default-browser-check",
@@ -222,15 +222,22 @@ def main():
     result_pipe.write(f"OK video_started={video_started}\n")
     result_pipe.flush()
 
-    # Keepalive loop until STOP received
+    # Keepalive loop until STOP received.
+    # Uses select() with a 15 s timeout so the keepalive JS fires on every
+    # iteration regardless of whether the main process sends anything.
+    # (The old blocking readline() meant keepalive never ran, letting Pluto's
+    # "Still watching?" overlay pause the stream after ~60 s.)
+    import select as _select
     while True:
         try:
-            line = control_pipe.readline()
-            if not line or line.strip() == "STOP":
-                break
+            r, _, _ = _select.select([control_pipe], [], [], 15.0)
+            if r:
+                line = control_pipe.readline()
+                if not line or line.strip() == "STOP":
+                    break
         except Exception:
             break
-        # keepalive tick
+        # keepalive tick — runs every 15 s
         try:
             page.evaluate("""() => {
                 for (const btn of document.querySelectorAll('button')) {
