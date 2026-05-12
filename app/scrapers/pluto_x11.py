@@ -528,16 +528,46 @@ class _X11Session:
     lock:      threading.Lock = field(default_factory=threading.Lock)
 
 
-_sessions:       dict[str, _X11Session] = {}
-_sessions_lock   = threading.Lock()
-_display_counter = 200   # :200+ to avoid conflicts with real displays
+_sessions:     dict[str, _X11Session] = {}
+_sessions_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Display number allocation — cross-process safe
+# ---------------------------------------------------------------------------
+# gunicorn forks N worker processes; each has its own copy of the module, so a
+# simple module-level integer counter resets to 200 in every fork and workers
+# collide on the same Xvfb display number.
+#
+# Solution: use a file-backed atomic counter in /tmp shared across all workers.
+# A lockf() exclusive lock ensures no two processes draw the same number.
+# ---------------------------------------------------------------------------
+
+_DISPLAY_LOCK_PATH  = "/tmp/pluto_x11_display.lock"
+_DISPLAY_COUNT_PATH = "/tmp/pluto_x11_display.count"
+_DISPLAY_BASE       = 200
 
 
 def _alloc_display() -> int:
-    global _display_counter
-    d = _display_counter
-    _display_counter += 1
-    return d
+    """
+    Return the next available Xvfb display number, guaranteed unique across
+    all gunicorn worker processes in this container.
+    Uses a lock file + a plain text counter file in /tmp.
+    """
+    import fcntl
+    with open(_DISPLAY_LOCK_PATH, "w") as lf:
+        fcntl.lockf(lf, fcntl.LOCK_EX)
+        try:
+            try:
+                with open(_DISPLAY_COUNT_PATH) as cf:
+                    n = int(cf.read().strip())
+            except (FileNotFoundError, ValueError):
+                n = _DISPLAY_BASE
+            next_n = n + 1
+            with open(_DISPLAY_COUNT_PATH, "w") as cf:
+                cf.write(str(next_n))
+            return n
+        finally:
+            fcntl.lockf(lf, fcntl.LOCK_UN)
 
 
 def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
@@ -552,6 +582,21 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
     )
 
     # ── 1. Xvfb ────────────────────────────────────────────────────────────
+    # Skip any display number whose lock file already exists — that means
+    # another worker's Xvfb is already bound there.
+    for _attempt in range(20):
+        lock_file = f"/tmp/.X{display_num}-lock"
+        if not os.path.exists(lock_file):
+            break
+        logger.warning(
+            "[pluto-x11] display :%d already locked — skipping to next", display_num
+        )
+        display_num = _alloc_display()
+        sess.display_num = display_num
+        sess.encoder = encoder  # keep encoder unchanged
+    else:
+        raise RuntimeError("Could not find a free Xvfb display after 20 attempts")
+
     sess.xvfb_proc = subprocess.Popen(
         [
             "Xvfb", f":{display_num}",
@@ -748,6 +793,30 @@ def _reaper() -> None:
                 _terminate_session(sess)
 
 
+def _cleanup_stale_pulse_dirs() -> None:
+    """
+    On worker startup, remove any PulseAudio socket dirs from a previous run
+    that share our worker's PID namespace.  This is a best-effort cleanup;
+    failures are silently ignored.
+    """
+    import glob, shutil
+    for d in glob.glob("/tmp/pulse-x11-*"):
+        try:
+            shutil.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+    # Also reset the display counter file so a fresh container starts at :200
+    # (only if no Xvfb lock files exist — i.e. we're the first worker up)
+    import glob as _glob
+    if not _glob.glob("/tmp/.X*-lock"):
+        try:
+            import os as _os
+            _os.remove("/tmp/pluto_x11_display.count")
+        except FileNotFoundError:
+            pass
+
+
+_cleanup_stale_pulse_dirs()
 threading.Thread(target=_reaper, daemon=True, name="pluto-x11-reaper").start()
 
 
