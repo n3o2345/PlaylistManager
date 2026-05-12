@@ -852,16 +852,9 @@ threading.Thread(target=_reaper, daemon=True, name="pluto-x11-reaper").start()
 # ---------------------------------------------------------------------------
 
 _PW_LOGIN_WORKER_SCRIPT = r'''
-import os, sys, time, json
+import os, sys, time, json, random
 
-# Broad selectors for Pluto's React sign-in form.
-# Pluto renders inputs with name="email" / name="password" inside a React SPA;
-# the type attribute may be "text" on the email field depending on version.
-# Pluto's actual login flow (observed from DOM):
-#   1. Navigate to /account/check-email  (email input)
-#   2. Submit → redirects to /account/password  (password input)
-# The top-level /sign-in just loads the homepage with a "Sign In" nav link
-# pointing to /account/check-email — so we go there directly.
+# Selectors for Pluto's React sign-in form.
 _EMAIL_SEL = (
     'input[name="email"], input[type="email"], '
     'input[placeholder*="email" i], input[id*="email" i]'
@@ -870,42 +863,59 @@ _PW_SEL = (
     'input[name="password"], input[type="password"], '
     'input[placeholder*="password" i], input[id*="password" i]'
 )
-# Ordered by likelihood — check-email is the real entry point
+
+# Pluto's two-step login flow:
+#   Step 1: /us/account/check-email  (enter email, click Continue)
+#   Step 2: /us/account/check-password  (enter password, click Sign In)
+# The /sign-in URL just shows the homepage — avoid it as a starting point.
 _SIGN_IN_URLS = [
     "https://pluto.tv/us/account/check-email",
     "https://pluto.tv/account/check-email",
     "https://pluto.tv/en/account/check-email",
-    "https://pluto.tv/sign-in",
-    "https://pluto.tv/en/sign-in",
 ]
+
+# URL fragments that indicate we are on the password step.
+# Pluto's actual flow: /us/account/check-email → /us/account/sign-in
+# (the password field appears on the /sign-in page after email is submitted)
+_PASSWORD_URL_FRAGMENTS = ("account/sign-in", "check-password", "account/password")
+
+
+def _human_delay(lo=0.08, hi=0.18):
+    time.sleep(random.uniform(lo, hi))
 
 
 def _fill_react_input(page, selector, value):
     """
-    Fill a React-controlled input using press_sequentially so onChange fires
-    on every keystroke — the only reliable method for React inputs.
-    Falls back to evaluate-based injection if the locator is not found.
+    Fill a React-controlled input by typing keystroke-by-keystroke with a
+    human-like random delay.  This is the only reliable method for React
+    controlled inputs — direct .value assignment bypasses onChange.
     """
     try:
         loc = page.locator(selector).first
         loc.click(timeout=5000)
-        # Clear existing value first
+        _human_delay(0.1, 0.25)
+        # Clear any pre-filled value
         loc.press("Control+a")
+        _human_delay()
         loc.press("Backspace")
-        loc.press_sequentially(value, delay=40)
+        _human_delay()
+        # Type each character with a small random inter-key delay
+        loc.press_sequentially(value, delay=random.randint(60, 120))
+        _human_delay(0.1, 0.2)
         return True
     except Exception:
         pass
-    # Fallback: direct DOM injection with synthetic events
+    # Fallback: React native setter (works when locator times out)
     try:
         page.evaluate("""([sel, val]) => {
             const inp = document.querySelector(sel);
             if (!inp) return false;
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+            const setter = Object.getOwnPropertyDescriptor(
                 window.HTMLInputElement.prototype, 'value').set;
-            nativeInputValueSetter.call(inp, val);
+            setter.call(inp, val);
             inp.dispatchEvent(new Event('input',  {bubbles: true}));
             inp.dispatchEvent(new Event('change', {bubbles: true}));
+            inp.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true}));
             return true;
         }""", [selector.split(",")[0].strip(), value])
         return True
@@ -920,13 +930,22 @@ def _click_button(page, labels):
             for (const btn of document.querySelectorAll('button, [role="button"]')) {
                 const t = (btn.textContent || '').trim().toLowerCase();
                 if (labels.some(l => t === l || t.includes(l))) {
-                    btn.click(); return true;
+                    if (btn.offsetParent !== null) { btn.click(); return true; }
                 }
             }
             return false;
         }""", [l.lower() for l in labels])
     except Exception:
         pass
+
+
+def _verify_field_value(page, selector, expected):
+    """Return True if the input currently holds the expected value."""
+    try:
+        actual = page.locator(selector).first.input_value(timeout=3000)
+        return actual == expected
+    except Exception:
+        return False
 
 
 def main():
@@ -954,8 +973,11 @@ def main():
     pw_args = [
         "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
         "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+        # Critical: mask automation fingerprint
         "--disable-blink-features=AutomationControlled",
         "--autoplay-policy=no-user-gesture-required",
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--lang=en-US,en",
     ]
 
     try:
@@ -963,48 +985,62 @@ def main():
         browser = pw.chromium.launch(headless=True, args=pw_args)
         context = browser.new_context(
             user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1280, "height": 800},
+            locale="en-US",
+            timezone_id="America/Chicago",
+            # Pretend to be a real desktop, not a headless bot
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+            },
         )
+        # Mask navigator.webdriver before any page loads
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+        """)
         page = context.new_page()
     except Exception as e:
         fail(f"launch failed: {e}")
         return
 
     try:
-        # ── Navigate to the email entry page ───────────────────────────────
-        # /sign-in redirects to the homepage (no form). The real entry point
-        # is /account/check-email — that's where the "Sign In" nav link goes.
-        # We try each URL and stop as soon as the email input is visible.
+        # ── Step 1: Find the email form ─────────────────────────────────────
+        # Warm up with the homepage first so cookies/session are established
+        # before we hit the login page — reduces bot-detection triggers.
+        try:
+            page.goto("https://pluto.tv/", wait_until="domcontentloaded", timeout=20000)
+            _human_delay(1.5, 2.5)
+        except Exception:
+            pass
+
         email_form_found = False
         for url in _SIGN_IN_URLS:
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=20000)
             except Exception:
                 continue
-            # Wait briefly for React to render
+            _human_delay(0.8, 1.5)
             try:
-                page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=8000)
+                page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=10000)
                 email_form_found = True
                 break
             except PWTimeout:
-                # This URL didn't show the form — try the next one
                 continue
 
         if not email_form_found:
-            # Last-ditch: load homepage and click the "Sign In" nav link
+            # Last resort: click Sign In from the homepage
             try:
                 page.goto("https://pluto.tv/", wait_until="domcontentloaded", timeout=20000)
-                page.wait_for_timeout(2000)
-                # Click the sign-in anchor (href="/account/check-email")
+                _human_delay(2.0, 3.0)
                 page.evaluate("""() => {
                     for (const a of document.querySelectorAll('a')) {
                         const h = (a.href || '');
                         const t = (a.textContent || '').trim().toLowerCase();
                         if (h.includes('check-email') || h.includes('sign-in') ||
-                            h.includes('signin') ||
                             t === 'sign in' || t === 'log in') {
                             a.click(); return;
                         }
@@ -1016,7 +1052,6 @@ def main():
                 pass
 
         if not email_form_found:
-            # Diagnostics so we know exactly what the page rendered
             inputs_found = ""
             body_snippet = ""
             try:
@@ -1028,54 +1063,98 @@ def main():
             except Exception:
                 pass
             fail(
-                f"email form not found on any login URL — "
+                f"email form not found — "
                 f"last_url={page.url} inputs=[{inputs_found}] body=[{body_snippet}]"
             )
             return
 
-        # ── Fill email ──────────────────────────────────────────────────────
+        # ── Step 2: Fill email ──────────────────────────────────────────────
         if not _fill_react_input(page, _EMAIL_SEL, pluto_email):
             fail("could not fill email field")
             return
 
-        page.wait_for_timeout(400)
+        # Verify value actually landed in the field
+        if not _verify_field_value(page, _EMAIL_SEL, pluto_email):
+            # Try once more with a longer delay
+            _human_delay(0.5, 1.0)
+            _fill_react_input(page, _EMAIL_SEL, pluto_email)
 
-        # ── Submit email → advance to password page ─────────────────────────
-        # Pluto's two-step flow: /account/check-email → /account/password
-        # The submit button text varies ("Continue", "Next", "Sign In").
+        _human_delay(0.4, 0.8)
+
+        # ── Step 3: Submit email, wait for password page ────────────────────
         _click_button(page, ["continue", "next", "sign in", "log in", "submit"])
-        # Also press Enter on the email field as a reliable fallback
+        _human_delay(0.3, 0.6)
         try:
             page.locator(_EMAIL_SEL).first.press("Enter")
         except Exception:
             pass
-        page.wait_for_timeout(1500)
 
-        # ── Fill password (may already be visible if single-step form) ──────
-        try:
-            page.wait_for_selector(_PW_SEL, state="visible", timeout=10000)
-        except PWTimeout:
-            fail(f"password field not found — url={page.url}")
+        # Wait for the URL to change to the password step
+        # (more reliable than a fixed sleep)
+        pw_page_reached = False
+        pw_wait_deadline = time.monotonic() + 15
+        while time.monotonic() < pw_wait_deadline:
+            try:
+                cur = page.url
+                if any(f in cur for f in _PASSWORD_URL_FRAGMENTS):
+                    # Also confirm the password input is rendered
+                    try:
+                        page.wait_for_selector(_PW_SEL, state="visible", timeout=5000)
+                        pw_page_reached = True
+                        break
+                    except PWTimeout:
+                        pass
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        if not pw_page_reached:
+            # Maybe the form is single-step (both fields visible together)
+            try:
+                page.wait_for_selector(_PW_SEL, state="visible", timeout=5000)
+                pw_page_reached = True
+            except PWTimeout:
+                pass
+
+        if not pw_page_reached:
+            cur_url = ""
+            try:
+                cur_url = page.url
+            except Exception:
+                pass
+            fail(f"password page not reached — url={cur_url}")
             return
 
+        _human_delay(0.4, 0.8)
+
+        # ── Step 4: Fill password ───────────────────────────────────────────
         if not _fill_react_input(page, _PW_SEL, pluto_password):
             fail("could not fill password field")
             return
 
-        page.wait_for_timeout(400)
+        # Verify the password field value
+        if not _verify_field_value(page, _PW_SEL, pluto_password):
+            _human_delay(0.5, 1.0)
+            _fill_react_input(page, _PW_SEL, pluto_password)
 
-        # ── Submit ──────────────────────────────────────────────────────────
+        _human_delay(0.4, 0.8)
+
+        # ── Step 5: Submit ──────────────────────────────────────────────────
         _click_button(page, ["sign in", "log in", "login", "signin", "submit", "continue"])
-        # Also try pressing Enter on the password field as a fallback
+        _human_delay(0.3, 0.6)
         try:
             page.locator(_PW_SEL).first.press("Enter")
         except Exception:
             pass
 
-        # ── Wait for successful login ───────────────────────────────────────
-        # Pluto redirects away from /sign-in on success and sets auth cookies.
+        # ── Step 6: Confirm login succeeded ────────────────────────────────
         logged_in = False
-        verify_deadline = time.monotonic() + 25
+        auth_names = {
+            "plutotv-userToken", "userToken", "authToken", "token",
+            "__session", "pluto-session", "plutotv-session",
+            "jwt", "access_token",
+        }
+        verify_deadline = time.monotonic() + 30
         while time.monotonic() < verify_deadline:
             time.sleep(1)
             try:
@@ -1083,28 +1162,20 @@ def main():
                 cookies = context.cookies()
                 cookie_names = {c["name"] for c in cookies}
 
-                # Auth cookie names seen in the wild
-                auth_names = {
-                    "plutotv-userToken", "userToken", "authToken", "token",
-                    "__session", "pluto-session", "plutotv-session",
-                    "jwt", "access_token",
-                }
-                has_auth_cookie = bool(cookie_names & auth_names)
-
-                # URL moved away from sign-in / login pages
-                left_signin = not any(
-                    x in current_url for x in ("sign-in", "signin", "login")
-                )
-
-                if has_auth_cookie:
+                if cookie_names & auth_names:
                     logged_in = True
                     break
-                if left_signin and current_url != "about:blank":
-                    # Give it one more tick to set cookies, then accept
-                    time.sleep(1)
+
+                # URL moved away from all login pages (success = redirect to home/browse)
+                left_signin = not any(
+                    x in current_url
+                    for x in ("check-email", "check-password", "account/password")
+                ) and "account/sign-in" not in current_url
+                if left_signin and current_url not in ("about:blank", ""):
+                    time.sleep(1.5)
                     cookies = context.cookies()
                     cookie_names = {c["name"] for c in cookies}
-                    if cookie_names & auth_names or len(cookies) > 3:
+                    if cookie_names & auth_names or len(cookies) > 5:
                         logged_in = True
                         break
             except Exception:
@@ -1117,6 +1188,7 @@ def main():
                     for (const sel of [
                         '[class*="error" i]', '[role="alert"]',
                         '[data-testid*="error" i]', '[class*="Error"]',
+                        'p[class*="message" i]',
                     ]) {
                         const el = document.querySelector(sel);
                         if (el && el.innerText.trim()) return el.innerText.trim().slice(0, 200);
