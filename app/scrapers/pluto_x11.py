@@ -241,22 +241,33 @@ def main():
             time.sleep(2)   # let Pluto redirect / close modal
 
     # ── Fullscreen CSS: hide all UI chrome, make video fill the display ───────
+    # IMPORTANT: Do NOT use broad [class*="modal"] — Pluto's video player root
+    # carries a class with "Modal" in its name and will be hidden.  Use only
+    # specific known overlay/control class fragments.
     try:
         page.evaluate("""() => {
             if (document.getElementById('pluto-x11-fs')) return;
             const s = document.createElement('style');
             s.id = 'pluto-x11-fs';
             s.textContent = `
-                [class*="overlay"],[class*="Overlay"],[class*="controls"],[class*="Controls"],
+                [class*="overlay"],[class*="Overlay"],
+                [class*="PlayerControls"],[class*="playerControls"],
+                [class*="ControlBar"],[class*="controlBar"],
+                [class*="TopBar"],[class*="topBar"],
                 [class*="nav"],[class*="Nav"],[class*="header"],[class*="Header"],
-                [class*="banner"],[class*="Badge"],[class*="modal"],[class*="Modal"],
-                [class*="stillWatching"],[class*="adOverlay"],[class*="pauseScreen"],
-                [class*="endCard"],[class*="spinner"],[class*="Spinner"],
-                [class*="loading"],[class*="Loading"]
+                [class*="banner"],[class*="Badge"],
+                [class*="stillWatching"],[class*="StillWatching"],
+                [class*="adOverlay"],[class*="AdOverlay"],
+                [class*="pauseScreen"],[class*="PauseScreen"],
+                [class*="endCard"],[class*="EndCard"],
+                [class*="spinner"],[class*="Spinner"],
+                [class*="loading"],[class*="Loading"],
+                [class*="consentBanner"],[class*="cookieBanner"],
+                [class*="ageGate"],[class*="AgeGate"]
                 { opacity:0!important; visibility:hidden!important; pointer-events:none!important; }
                 video { position:fixed!important; top:0!important; left:0!important;
                         width:100vw!important; height:100vh!important; z-index:99999!important;
-                        object-fit:cover!important; background:#000!important; }
+                        object-fit:contain!important; background:#000!important; }
                 body  { background:#000!important; overflow:hidden!important; margin:0!important; }
                 html  { background:#000!important; }
                 *     { cursor:none!important; }
@@ -329,18 +340,33 @@ def main():
                 const v = document.querySelector('video');
                 if (!v) return {found: false};
                 if (v.muted) { v.muted = false; v.volume = 1.0; }
+                const buffered = v.buffered.length > 0 ? v.buffered.end(v.buffered.length-1) : 0;
                 return {found: true, readyState: v.readyState,
-                        currentTime: v.currentTime, paused: v.paused};
+                        currentTime: v.currentTime, paused: v.paused,
+                        buffered: buffered, src: !!(v.src || v.currentSrc)};
             }""")
-            if r.get("found") and r.get("readyState", 0) >= 2:
-                if not r.get("paused", True) or r.get("currentTime", 0) > 0:
+            if r.get("found"):
+                rs = r.get("readyState", 0)
+                ct = r.get("currentTime", 0)
+                buf = r.get("buffered", 0)
+                # Accept: playing (not paused + has time), OR buffered data present
+                if (not r.get("paused", True) and (ct > 0 or buf > 0)) or (rs >= 3 and buf > 0):
                     video_started = True
                     break
-            if r.get("paused"):
-                try:
-                    page.evaluate("() => { const v=document.querySelector('video'); if(v) v.play(); }")
-                except Exception:
-                    pass
+            # Nudge: try to dismiss any blocking dialog, then play
+            try:
+                page.evaluate("""() => {
+                    for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                        const t = (btn.textContent||'').toLowerCase();
+                        if (['accept','agree','got it','ok','close','continue',
+                             'i agree','watch'].some(w=>t.includes(w))
+                            && btn.offsetParent !== null) { btn.click(); return; }
+                    }
+                    const v = document.querySelector('video');
+                    if (v && v.paused) v.play().catch(()=>{});
+                }""")
+            except Exception:
+                pass
         except Exception:
             pass
         time.sleep(1)
@@ -366,13 +392,27 @@ def main():
         # keepalive tick — runs every 15 s
         try:
             page.evaluate("""() => {
-                for (const btn of document.querySelectorAll('button')) {
+                // Dismiss "Still Watching?" and similar overlays
+                for (const btn of document.querySelectorAll('button, [role="button"]')) {
                     const t = (btn.textContent||'').toLowerCase();
-                    if (['still watching','continue','yes','keep watching'].some(w=>t.includes(w)))
-                        { btn.click(); return; }
+                    if (['still watching','continue','yes','keep watching',
+                         'accept','agree','got it','ok','close',
+                         'confirm','i agree'].some(w=>t.includes(w))) {
+                        if (btn.offsetParent !== null) { btn.click(); return; }
+                    }
                 }
+                // Dismiss consent / age-gate dialogs
+                for (const sel of [
+                    '[class*="ageGate"] button', '[class*="AgeGate"] button',
+                    '[class*="consentBanner"] button', '[class*="cookieBanner"] button',
+                    '[id*="onetrust-accept"]', '[class*="acceptAll"]',
+                ]) {
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) { el.click(); return; }
+                }
+                // Keep video alive
                 const v = document.querySelector('video');
-                if (v) { v.muted=false; v.volume=1.0; if(v.paused||v.ended) v.play(); }
+                if (v) { v.muted=false; v.volume=1.0; if(v.paused||v.ended) v.play().catch(()=>{}); }
             }""")
         except Exception:
             pass
@@ -908,8 +948,11 @@ _SIGN_IN_URLS = [
 ]
 
 # URL fragments that indicate we are on the password step.
-# Pluto's actual flow: /us/account/check-email → /us/account/sign-in
-# (the password field appears on the /sign-in page after email is submitted)
+# Pluto's actual SPA flow: /us/account/check-email submits email, then the
+# password field appears on /us/account/sign-in (it's a client-side route
+# change — the URL stays at sign-in for the password step).
+# IMPORTANT: account/sign-in IS the password step URL, not a "still on login"
+# indicator.  left_signin must NOT treat it as a failure.
 _PASSWORD_URL_FRAGMENTS = ("account/sign-in", "check-password", "account/password")
 
 
@@ -1055,8 +1098,8 @@ def main():
         browser = pw.chromium.launch(headless=False, env=pw_env, args=pw_args)
         context = browser.new_context(
             user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1280, "height": 800},
             locale="en-US",
@@ -1074,17 +1117,26 @@ def main():
 
     try:
         # ── Step 1: Find the email form ─────────────────────────────────────
-        # IMPORTANT: Navigate via the homepage and click the Sign In link so
-        # Pluto assigns its msockid session token naturally through its own
-        # redirect chain.  Going directly to /check-email skips this and causes
-        # Pluto to reject the password submission as a bot/invalid session.
+        # IMPORTANT: Navigate via the homepage first so Pluto assigns its
+        # msockid / ptv-client-id session tokens naturally through its own
+        # redirect chain before we touch any auth endpoint.
+        # Going directly to /check-email skips this and causes Pluto to
+        # fingerprint the session as a bot and return "Email or password is
+        # not correct" even when credentials are valid.
         email_form_found = False
         try:
+            # Step 1a: warm up session cookies on the homepage
             page.goto("https://pluto.tv/us/live-tv", wait_until="domcontentloaded", timeout=20000)
-            _human_delay(2.0, 3.0)
+            _human_delay(2.5, 4.0)
+            # Scroll slightly to simulate human interaction
+            try:
+                page.evaluate("() => window.scrollBy(0, Math.random()*200+50)")
+            except Exception:
+                pass
+            _human_delay(0.5, 1.0)
             # Click the "Sign In" button/link in the nav
             page.evaluate("""() => {
-                for (const el of document.querySelectorAll('a, button')) {
+                for (const el of document.querySelectorAll('a, button, [role="button"]')) {
                     const t = (el.textContent || '').trim().toLowerCase();
                     const h = (el.href || '');
                     if (t === 'sign in' || t === 'log in' ||
@@ -1241,12 +1293,21 @@ def main():
                 pass
 
         # ── Step 6: Confirm login succeeded ────────────────────────────────
+        # Pluto's SPA flow after Sign In click:
+        #   /account/sign-in  →  (brief pause)  →  /us/live-tv  (or similar)
+        # We detect success by: URL leaves all /account/* pages OR a known
+        # auth cookie appears.  Do NOT fail if still on /account/sign-in
+        # immediately after submit — that's the password step URL itself.
         logged_in = False
         auth_names = {
             "plutotv-userToken", "userToken", "authToken", "token",
             "__session", "pluto-session", "plutotv-session",
             "jwt", "access_token",
         }
+        # All URL patterns that represent still-being-on-login-flow
+        _LOGIN_URL_PARTS = (
+            "check-email", "check-password", "account/password", "account/sign-in"
+        )
         verify_deadline = time.monotonic() + 30
         while time.monotonic() < verify_deadline:
             time.sleep(1)
@@ -1255,15 +1316,13 @@ def main():
                 cookies = context.cookies()
                 cookie_names = {c["name"] for c in cookies}
 
+                # Auth cookie present → success
                 if cookie_names & auth_names:
                     logged_in = True
                     break
 
-                # URL moved away from all login pages (success = redirect to home/browse)
-                left_signin = not any(
-                    x in current_url
-                    for x in ("check-email", "check-password", "account/password")
-                ) and "account/sign-in" not in current_url
+                # URL moved fully away from login flow → success
+                left_signin = not any(x in current_url for x in _LOGIN_URL_PARTS)
                 if left_signin and current_url not in ("about:blank", ""):
                     time.sleep(1.5)
                     cookies = context.cookies()
@@ -1271,6 +1330,25 @@ def main():
                     if cookie_names & auth_names or len(cookies) > 5:
                         logged_in = True
                         break
+
+                # If we're still on sign-in page after 20s, check for error text
+                # and bail early rather than waiting the full 30s
+                if time.monotonic() > verify_deadline - 10:
+                    err_check = ""
+                    try:
+                        err_check = page.evaluate("""() => {
+                            for (const sel of ['[class*="error" i]','[role="alert"]',
+                                               '[data-testid*="error" i]']) {
+                                const el = document.querySelector(sel);
+                                if (el && el.innerText.trim()) return el.innerText.trim();
+                            }
+                            return '';
+                        }""")
+                    except Exception:
+                        pass
+                    if err_check:
+                        break  # definitive error — stop waiting
+
             except Exception:
                 pass
 
