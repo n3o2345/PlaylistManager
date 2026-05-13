@@ -974,7 +974,12 @@ def pluto_x11_manifest(channel_id: str):
 
 
 def _pluto_x11_stream_response(channel_id: str):
-    from ..scrapers.pluto_x11 import stream_channel, ENABLED as _X11_ENABLED
+    from ..scrapers.pluto_x11 import (
+        stream_channel,
+        verify_login,
+        login_and_store_cookies,
+        ENABLED as _X11_ENABLED,
+    )
 
     if not _X11_ENABLED:
         abort(503)
@@ -985,12 +990,24 @@ def _pluto_x11_stream_response(channel_id: str):
 
     slug = channel.slug or channel_id
     pluto_web_url = f"https://pluto.tv/live-tv/{slug}"
+    source_config = channel.source.config or {}
+    email = (source_config.get('username') or '').strip()
+    password = source_config.get('password') or ''
+
+    login_status = verify_login()
+    if not login_status.get('ok') and email and password:
+        refresh = login_and_store_cookies(email, password)
+        if not refresh.get('ok'):
+            logger.warning(
+                '[pluto-x11] stored login refresh failed before playback: %s',
+                refresh.get('error') or refresh.get('reason') or 'unknown error',
+            )
 
     logger.info('[pluto-x11] client=%s channel=%s slug=%s',
                 _client_ip(), channel_id, slug)
 
     return Response(
-        stream_with_context(stream_channel(channel_id, pluto_web_url)),
+        stream_with_context(stream_channel(channel_id, pluto_web_url, email=email or None, password=password or None)),
         mimetype='video/MP2T',
         headers={
             'Cache-Control':              'no-cache, no-store, must-revalidate',

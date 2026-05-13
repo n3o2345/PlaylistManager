@@ -82,8 +82,14 @@ On **TrueNAS SCALE**: select the NVIDIA GPU under app → Resources → GPU Pass
 | `PLUTO_X11_FPS`           | `30`      | Frame rate                                               |
 | `PLUTO_X11_BITRATE`       | `2500k`   | Video bitrate (per active session)                       |
 | `PLUTO_X11_IDLE_TIMEOUT`  | `30`      | Seconds to keep session alive after last viewer leaves   |
-| `PLUTO_X11_STARTUP_WAIT`  | `5`       | Seconds to wait for Chromium to load before grabbing     |
+| `PLUTO_X11_STARTUP_WAIT`  | `8`       | Maximum seconds to wait for Chromium video readiness     |
+| `FASTCHANNELS_AUTH_DIR`   | `/data/auth` | Durable auth directory on the `/data` volume          |
+| `PLUTO_X11_COOKIE_PATH`   | `/data/auth/pluto_x11_cookies.json` | Stored Pluto login cookies/token        |
+| `PLUTO_X11_CLIENT_ID_PATH` | `/data/auth/pluto_x11_client_id` | Stable Pluto device/client id           |
 | `CHROMIUM_PATH`           | *(auto)*  | Override Chromium binary path                            |
+
+Pluto X11 login state is stored under `/data/auth` by default, so it survives
+container restarts and image rebuilds as long as the `/data` volume is kept.
 
 ## Stream URLs
 

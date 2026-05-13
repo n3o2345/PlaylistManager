@@ -57,11 +57,12 @@ DISPLAY_H       = int(os.environ.get("PLUTO_X11_HEIGHT",       "720"))
 FRAMERATE       = int(os.environ.get("PLUTO_X11_FPS",          "30"))
 BITRATE         = os.environ.get("PLUTO_X11_BITRATE",          "2500k")
 IDLE_TIMEOUT    = int(os.environ.get("PLUTO_X11_IDLE_TIMEOUT", "30"))
-STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "12"))
+STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "8"))
 FORCE_ENCODER   = os.environ.get("PLUTO_X11_ENCODER", "").strip().lower() or None
 CHUNK_SIZE      = 65536
 MAX_QUEUE_DEPTH = 64
-COOKIE_PATH     = os.environ.get("PLUTO_X11_COOKIE_PATH", "/tmp/pluto_x11_cookies.json")
+AUTH_DIR        = os.environ.get("FASTCHANNELS_AUTH_DIR", "/data/auth")
+COOKIE_PATH     = os.environ.get("PLUTO_X11_COOKIE_PATH", os.path.join(AUTH_DIR, "pluto_x11_cookies.json"))
 
 # ---------------------------------------------------------------------------
 # Pluto TV REST API constants
@@ -88,7 +89,34 @@ _PLUTO_BASE_HEADERS = {
     "sec-fetch-site": "same-site",
 }
 # Persistent client UUID — generated once, reused so Pluto recognises the device.
-_CLIENT_ID_PATH = os.environ.get("PLUTO_X11_CLIENT_ID_PATH", "/tmp/pluto_x11_client_id")
+_CLIENT_ID_PATH = os.environ.get("PLUTO_X11_CLIENT_ID_PATH", os.path.join(AUTH_DIR, "pluto_x11_client_id"))
+_LEGACY_COOKIE_PATH = "/tmp/pluto_x11_cookies.json"
+_LEGACY_CLIENT_ID_PATH = "/tmp/pluto_x11_client_id"
+
+
+def _ensure_auth_storage() -> None:
+    """Create durable auth storage and migrate old /tmp Pluto auth files."""
+    import shutil
+
+    for path in (COOKIE_PATH, _CLIENT_ID_PATH):
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+    for old_path, new_path in (
+        (_LEGACY_COOKIE_PATH, COOKIE_PATH),
+        (_LEGACY_CLIENT_ID_PATH, _CLIENT_ID_PATH),
+    ):
+        if old_path == new_path or not os.path.exists(old_path) or os.path.exists(new_path):
+            continue
+        try:
+            shutil.copy2(old_path, new_path)
+            logger.info("[pluto-x11] migrated auth state %s -> %s", old_path, new_path)
+        except Exception as exc:
+            logger.warning("[pluto-x11] failed to migrate auth state %s -> %s: %s", old_path, new_path, exc)
+
+
+_ensure_auth_storage()
 
 # ---------------------------------------------------------------------------
 # Playwright worker script — runs in a fresh child process, no gevent
@@ -245,16 +273,32 @@ def main():
     # blindly.  Falls back to a 3 s cap if the video element never appears
     # (e.g. login wall is blocking).
     try:
-        page.wait_for_selector("video", state="attached", timeout=6000)
+        page.wait_for_selector("video", state="attached", timeout=4000)
     except Exception:
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(1500)
+
+    def _video_ready():
+        try:
+            return bool(page.evaluate("""() => {
+                const v = document.querySelector('video');
+                if (!v) return false;
+                const buffered = v.buffered.length > 0 ? v.buffered.end(v.buffered.length-1) : 0;
+                return !!(v.src || v.currentSrc) && (v.readyState >= 2 || buffered > 0.25 || v.currentTime > 0);
+            }"""))
+        except Exception:
+            return False
+
+    _needs_login_flow = not _video_ready()
 
     # ── Pre-login modal: "Continue / Limit features" upsell ────────────────
     # This modal appears BEFORE the sign-in form and blocks it entirely.
     # Must be dismissed first.  The "Continue" button leads to the sign-in
     # form; "Limit features" skips login (we don't want that).
-    _upsell_deadline = time.monotonic() + 8
-    while time.monotonic() < _upsell_deadline:
+    _upsell_deadline = time.monotonic() + 3
+    while _needs_login_flow and time.monotonic() < _upsell_deadline:
+        if _video_ready():
+            _needs_login_flow = False
+            break
         try:
             _dismissed = page.evaluate("""() => {
                 for (const btn of document.querySelectorAll('button,[role="button"]')) {
@@ -267,15 +311,15 @@ def main():
                 return false;
             }""")
             if _dismissed:
-                time.sleep(1.0)  # let sign-in form animate in
+                time.sleep(0.6)  # let sign-in form animate in
                 break
         except Exception:
             pass
-        time.sleep(0.4)
+        time.sleep(0.25)
 
     # ── Login modal handling ────────────────────────────────────────────────
     # Must happen BEFORE CSS injection so the modal still has pointer-events.
-    if pluto_email and pluto_password:
+    if _needs_login_flow and pluto_email and pluto_password:
         _login_attempted = False
         _login_deadline  = time.monotonic() + 20
 
@@ -409,7 +453,7 @@ def main():
             time.sleep(0.5)
 
         if _login_attempted:
-            time.sleep(2)   # let Pluto redirect / close modal
+            time.sleep(1)   # let Pluto redirect / close modal
 
     # ── Fullscreen CSS: hide all UI chrome, make video fill the display ───────
     # IMPORTANT: Do NOT use broad [class*="modal"] — Pluto's video player root
@@ -553,7 +597,7 @@ def main():
                 pass
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(0.25)
 
     result_pipe.write(f"OK video_started={video_started}\n")
     result_pipe.flush()
@@ -765,7 +809,11 @@ def _start_pulseaudio(display_num: int) -> subprocess.Popen | None:
             f"auth-anonymous=1 auth-cookie-enabled=0 socket={pa_socket}\n"
         )
         open(f"{socket_dir}/daemon.conf", "w").write(
-            "default-sample-rate = 48000\nexit-idle-time = -1\nlog-level = error\n"
+            "default-sample-rate = 48000\n"
+            "default-fragments = 4\n"
+            "default-fragment-size-msec = 10\n"
+            "exit-idle-time = -1\n"
+            "log-level = error\n"
         )
     except Exception as e:
         logger.debug("[pluto-x11] PA config write failed: %s", e)
@@ -1012,7 +1060,9 @@ def _launch_session(channel_id: str, pluto_url: str,
     # ── 4. ffmpeg x11grab → MPEG-TS ────────────────────────────────────────
     has_audio = ps is not None
     ffmpeg_cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-fflags", "+genpts+nobuffer", "-flags", "low_delay",
+        "-thread_queue_size", "512", "-use_wallclock_as_timestamps", "1",
         "-f", "x11grab", "-framerate", str(FRAMERATE),
         "-video_size", f"{DISPLAY_W}x{DISPLAY_H}",
         "-i", f":{display_num}.0+0,0",
@@ -1021,11 +1071,23 @@ def _launch_session(channel_id: str, pluto_url: str,
     if has_audio:
         # Use the explicit monitor source name, not "default" — "default" maps
         # to the sink input, not the monitor output, and often captures silence.
-        ffmpeg_cmd += ["-f", "pulse", "-ac", "2", "-ar", "48000", "-i", "out.monitor"]
+        ffmpeg_cmd += [
+            "-thread_queue_size", "512", "-use_wallclock_as_timestamps", "1",
+            "-f", "pulse", "-fragment_size", "2048",
+            "-ac", "2", "-ar", "48000", "-i", "out.monitor",
+        ]
     ffmpeg_cmd += _build_vf_chain(encoder)
     ffmpeg_cmd += _build_video_encoder_args(encoder)
-    ffmpeg_cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if has_audio else ["-an"]
-    ffmpeg_cmd += ["-f", "mpegts", "pipe:1"]
+    ffmpeg_cmd += (
+        ["-af", "aresample=async=1:first_pts=0", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
+        if has_audio else
+        ["-an"]
+    )
+    ffmpeg_cmd += [
+        "-max_interleave_delta", "0",
+        "-muxdelay", "0", "-muxpreload", "0", "-flush_packets", "1",
+        "-f", "mpegts", "pipe:1",
+    ]
 
     ffmpeg_env = {**os.environ, "DISPLAY": f":{display_num}"}
     if has_audio:

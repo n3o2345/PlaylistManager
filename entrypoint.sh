@@ -72,8 +72,16 @@ else
     echo "ℹ tvapp2 internal daemon disabled (TVAPP2_ENABLED=0)"
 fi
 
-# Ensure the default SQLite data directory exists before app startup.
-mkdir -p /data
+# Ensure durable data/auth directories exist before app startup.
+mkdir -p /data "${FASTCHANNELS_AUTH_DIR:-/data/auth}" /data/tvapp2
+
+# One-time migration from older Pluto X11 builds that kept login state in /tmp.
+if [ -f /tmp/pluto_x11_cookies.json ] && [ ! -f "${PLUTO_X11_COOKIE_PATH:-/data/auth/pluto_x11_cookies.json}" ]; then
+    cp /tmp/pluto_x11_cookies.json "${PLUTO_X11_COOKIE_PATH:-/data/auth/pluto_x11_cookies.json}" || true
+fi
+if [ -f /tmp/pluto_x11_client_id ] && [ ! -f "${PLUTO_X11_CLIENT_ID_PATH:-/data/auth/pluto_x11_client_id}" ]; then
+    cp /tmp/pluto_x11_client_id "${PLUTO_X11_CLIENT_ID_PATH:-/data/auth/pluto_x11_client_id}" || true
+fi
 
 # Create DB tables and run schema migrations (once, before worker/gunicorn start).
 # Setting FC_SCHEMA_READY=1 tells create_app() to skip ensure_runtime_schema()

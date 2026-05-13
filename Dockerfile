@@ -19,7 +19,10 @@ ENV PLUTO_X11_ENABLED=1 \
     PLUTO_X11_FPS=30 \
     PLUTO_X11_BITRATE=2500k \
     PLUTO_X11_IDLE_TIMEOUT=30 \
-    PLUTO_X11_STARTUP_WAIT=12 \
+    PLUTO_X11_STARTUP_WAIT=8 \
+    FASTCHANNELS_AUTH_DIR=/data/auth \
+    PLUTO_X11_COOKIE_PATH=/data/auth/pluto_x11_cookies.json \
+    PLUTO_X11_CLIENT_ID_PATH=/data/auth/pluto_x11_client_id \
     CHROMIUM_PATH=/usr/bin/chromium
 
 
@@ -61,7 +64,7 @@ RUN git clone --depth=1 https://github.com/TheBinaryNinja/tvapp2.git /opt/tvapp2
     && rm -rf /opt/tvapp2-src \
     && cd /opt/tvapp2 \
     && npm install --omit=dev \
-    && mkdir -p /data/tvapp2
+    && mkdir -p /data/tvapp2 /data/auth
 
 # ── PlaylistManager app ───────────────────────────────────────────────────────
 COPY . .
