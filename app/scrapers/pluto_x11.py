@@ -143,12 +143,14 @@ def main():
         "--start-maximized", "--start-fullscreen",
         f"--window-size={display_w},{display_h}", "--window-position=0,0",
         "--disable-session-crashed-bubble", "--hide-crash-restore-bubble",
-        "--disable-features=MediaSessionService,HardwareMediaKeyHandling",
+        "--disable-accelerated-video-decode",
+        "--disable-gpu-memory-buffer-video-frames",
+        "--disable-zero-copy",
+        "--disable-features=MediaSessionService,HardwareMediaKeyHandling,UseChromeOSDirectVideoDecoder,VaapiVideoDecoder",
         # Software rendering for Xvfb (no real GPU available)
         "--use-gl=swiftshader",
         "--use-angle=swiftshader-webgl",
         "--ignore-gpu-blocklist",
-        "--enable-unsafe-webgpu",
     ]
 
     try:
@@ -419,20 +421,21 @@ def main():
             const s = document.createElement('style');
             s.id = 'pluto-x11-fs';
             s.textContent = `
-                [class*="overlay"],[class*="Overlay"],
-                [class*="PlayerControls"],[class*="playerControls"],
-                [class*="ControlBar"],[class*="controlBar"],
-                [class*="TopBar"],[class*="topBar"],
-                [class*="nav"],[class*="Nav"],[class*="header"],[class*="Header"],
-                [class*="banner"],[class*="Badge"],
-                [class*="stillWatching"],[class*="StillWatching"],
-                [class*="adOverlay"],[class*="AdOverlay"],
-                [class*="pauseScreen"],[class*="PauseScreen"],
-                [class*="endCard"],[class*="EndCard"],
-                [class*="spinner"],[class*="Spinner"],
-                [class*="loading"],[class*="Loading"],
-                [class*="consentBanner"],[class*="cookieBanner"],
-                [class*="ageGate"],[class*="AgeGate"]
+                [class*="overlay"]:not(:has(video)),[class*="Overlay"]:not(:has(video)),
+                [class*="PlayerControls"]:not(:has(video)),[class*="playerControls"]:not(:has(video)),
+                [class*="ControlBar"]:not(:has(video)),[class*="controlBar"]:not(:has(video)),
+                [class*="TopBar"]:not(:has(video)),[class*="topBar"]:not(:has(video)),
+                [class*="nav"]:not(:has(video)),[class*="Nav"]:not(:has(video)),
+                [class*="header"]:not(:has(video)),[class*="Header"]:not(:has(video)),
+                [class*="banner"]:not(:has(video)),[class*="Badge"]:not(:has(video)),
+                [class*="stillWatching"]:not(:has(video)),[class*="StillWatching"]:not(:has(video)),
+                [class*="adOverlay"]:not(:has(video)),[class*="AdOverlay"]:not(:has(video)),
+                [class*="pauseScreen"]:not(:has(video)),[class*="PauseScreen"]:not(:has(video)),
+                [class*="endCard"]:not(:has(video)),[class*="EndCard"]:not(:has(video)),
+                [class*="spinner"]:not(:has(video)),[class*="Spinner"]:not(:has(video)),
+                [class*="loading"]:not(:has(video)),[class*="Loading"]:not(:has(video)),
+                [class*="consentBanner"]:not(:has(video)),[class*="cookieBanner"]:not(:has(video)),
+                [class*="ageGate"]:not(:has(video)),[class*="AgeGate"]:not(:has(video))
                 { opacity:0!important; visibility:hidden!important; pointer-events:none!important; }
                 video { position:fixed!important; top:0!important; left:0!important;
                         width:100vw!important; height:100vh!important; z-index:99999!important;
@@ -442,6 +445,13 @@ def main():
                 *     { cursor:none!important; }
             `;
             document.head.appendChild(s);
+            const v = document.querySelector('video');
+            for (let el = v; el && el !== document.documentElement; el = el.parentElement) {
+                el.style.visibility = 'visible';
+                el.style.opacity = '1';
+                el.style.display = el === v ? 'block' : (el.style.display || 'block');
+                el.style.pointerEvents = el === v ? 'auto' : (el.style.pointerEvents || 'none');
+            }
         }""")
     except Exception:
         pass
@@ -586,7 +596,16 @@ def main():
                 }
                 // Keep video alive
                 const v = document.querySelector('video');
-                if (v) { v.muted=false; v.volume=1.0; if(v.paused||v.ended) v.play().catch(()=>{}); }
+                if (v) {
+                    for (let el = v; el && el !== document.documentElement; el = el.parentElement) {
+                        el.style.visibility = 'visible';
+                        el.style.opacity = '1';
+                        el.style.display = el === v ? 'block' : (el.style.display || 'block');
+                    }
+                    v.style.position='fixed'; v.style.inset='0'; v.style.width='100vw';
+                    v.style.height='100vh'; v.style.zIndex='99999'; v.style.objectFit='contain';
+                    v.muted=false; v.volume=1.0; if(v.paused||v.ended) v.play().catch(()=>{});
+                }
             }""")
         except Exception:
             pass
