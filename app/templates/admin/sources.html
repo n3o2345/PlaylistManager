@@ -564,6 +564,10 @@
 
   <script>
     const MASK = '••••••••';
+    // Stores real secret field values keyed by "sourceId:fieldKey" so that
+    // plutoLoginVerify can read the actual password after saveSourceConfig
+    // has replaced the input value with the MASK placeholder.
+    const _savedCredentials = {};
     let _pendingSourceId   = null;
     let _pendingCheckbox   = null;
 
@@ -1441,12 +1445,18 @@
       const btn        = document.getElementById(`pluto-login-btn-${sourceId}`);
       const cookieSt   = document.getElementById(`pluto-login-cookie-status-${sourceId}`);
 
-      const email    = (emailEl?.value || '').trim();
-      const password = (passwordEl?.value || '').trim();
+      const email = (emailEl?.value || '').trim();
+
+      // If the field was masked by saveSourceConfig, recover the real value
+      // from _savedCredentials rather than sending the '••••••••' placeholder.
+      const rawPw   = passwordEl?.value || '';
+      const password = (rawPw === MASK || rawPw === '')
+        ? (_savedCredentials[`${sourceId}:password`] || '').trim()
+        : rawPw.trim();
 
       if (!email || !password) {
         statusEl.className = 'config-status error';
-        statusEl.textContent = '\u2715 Enter username and password above first';
+        statusEl.textContent = '\u2715 Enter username and password above first, then Save Settings before logging in';
         return;
       }
 
@@ -1786,6 +1796,9 @@
         status.className = 'config-status ok';
         fields.forEach(field => {
           if (field.dataset.secret === 'true' && field.value && field.value !== MASK) {
+            // Persist the real value before masking so Login & Verify can
+            // use it even after the field has been replaced with the placeholder.
+            _savedCredentials[`${sourceId}:${field.dataset.key}`] = field.value;
             field.value = MASK;
           }
         });
