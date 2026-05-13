@@ -203,13 +203,14 @@ def main():
             pass  # missing / corrupt cookie file — fall through to modal login
 
     if _auth_token:
-        # localStorage injection: runs before Pluto React boots on every navigation
+        # localStorage injection: runs before Pluto React boots on every navigation.
+        # json.dumps() handles the JWT encoding; single-quote JS keys need no escaping.
         _init_js = (
             "(()=>{"
-            "const tok="" + _auth_token + "";"
-            "const keys=["plutotv-userToken","userToken","sessionToken","
-            ""authorizationToken","pluto_session","pluto.tv:userToken"];"
-            "try{for(const k of keys){try{localStorage.setItem(k,tok);}catch(e){}}}catch(e){}"
+            "const tok=" + json.dumps(_auth_token) + ";"
+            "['plutotv-userToken','userToken','sessionToken',"
+            "'authorizationToken','pluto_session','pluto.tv:userToken']"
+            ".forEach(k=>{try{localStorage.setItem(k,tok);}catch(e){}});"
             "})();"
         )
         context.add_init_script(_init_js)
