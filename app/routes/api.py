@@ -814,6 +814,48 @@ def save_source_config(source_id):
     })
 
 
+@api_bp.route('/sources/pluto/login-status')
+def pluto_login_status():
+    """Return the stored Pluto X11 login-cookie state as JSON."""
+    try:
+        from ..scrapers.pluto_x11 import verify_login
+        status = verify_login()
+        return jsonify(status)
+    except Exception as exc:
+        current_app.logger.warning('[pluto-login] status check failed: %s', exc)
+        return jsonify({'ok': False, 'reason': str(exc)}), 500
+
+
+@api_bp.route('/sources/pluto/login-verify', methods=['POST'])
+def pluto_login_verify():
+    """Authenticate Pluto credentials and persist cookies for X11 playback."""
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or data.get('username') or '').strip()
+    password = data.get('password') or ''
+    if not email or not password:
+        return jsonify({'ok': False, 'error': 'email and password are required'}), 400
+
+    try:
+        from ..scrapers.pluto_x11 import login_and_store_cookies
+        result = login_and_store_cookies(email, password)
+        return jsonify(result), (200 if result.get('ok') else 400)
+    except Exception as exc:
+        current_app.logger.exception('[pluto-login] login verification failed')
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
+@api_bp.route('/sources/pluto/login-clear', methods=['POST'])
+def pluto_login_clear():
+    """Clear stored Pluto X11 login cookies."""
+    try:
+        from ..scrapers.pluto_x11 import clear_cookies, verify_login
+        clear_cookies()
+        return jsonify({'ok': True, 'status': 'cleared', 'login': verify_login()})
+    except Exception as exc:
+        current_app.logger.warning('[pluto-login] cookie clear failed: %s', exc)
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
 @api_bp.route('/channels')
 def list_channels():
     page     = request.args.get('page', 1, type=int)

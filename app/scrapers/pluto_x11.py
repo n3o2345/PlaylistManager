@@ -1984,9 +1984,11 @@ def verify_login(cookie_path: str | None = None) -> dict:
         logger.warning("[pluto-x11] verify_login: no known auth cookie names found; "
                        "assuming valid (%d cookies)", len(cookies))
 
-    # Report real cookie count excluding the synthetic token entry
+    # Report real cookie count excluding the synthetic token entry when
+    # available. API login may only produce the synthetic auth token, and that
+    # still represents a usable login state for the X11 worker.
     real_n = sum(1 for c in cookies if c.get("name") != "_pluto_x11_authtoken")
-    return {"ok": True, "cookies": real_n}
+    return {"ok": True, "cookies": real_n or len(cookies)}
 
 
 def clear_cookies(cookie_path: str | None = None) -> None:

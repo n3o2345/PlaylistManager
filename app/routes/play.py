@@ -961,14 +961,20 @@ def _pluto_x11_get_channel(channel_id: str):
 def pluto_x11_manifest(channel_id: str):
     """
     HLS manifest for a Pluto TV X11 screen-grab session.
-    Starts the session on first request, waits up to 60 s for first segments,
-    then returns the manifest with segment URLs rewritten to point at /x11-seg/.
-    Mirrors philoproxy stream.js _handlePhiloM3u8Request() exactly.
+
+    The supported X11 capture path is /x11.ts. Previous builds redirected the
+    MPEG-TS endpoint here, but the HLS segmenter helpers were never implemented,
+    which made Pluto playback fail before video could start.
     """
-    from ..scrapers.pluto_x11 import (
-        get_or_create_session, wait_for_segments,
-        get_hls_manifest, release_client, ENABLED as _X11_ENABLED,
+    return Response(
+        'Pluto X11 HLS manifest mode is unavailable; use x11.ts MPEG-TS streaming.',
+        status=501,
+        mimetype='text/plain',
     )
+
+
+def _pluto_x11_stream_response(channel_id: str):
+    from ..scrapers.pluto_x11 import stream_channel, ENABLED as _X11_ENABLED
 
     if not _X11_ENABLED:
         abort(503)
@@ -983,25 +989,9 @@ def pluto_x11_manifest(channel_id: str):
     logger.info('[pluto-x11] client=%s channel=%s slug=%s',
                 _client_ip(), channel_id, slug)
 
-    sess = get_or_create_session(channel_id, pluto_web_url)
-
-    if not wait_for_segments(channel_id, timeout=60.0):
-        release_client(channel_id)
-        return Response('Stream failed to start within 60 s', status=503)
-
-    proto = request.headers.get('X-Forwarded-Proto', request.scheme)
-    host  = request.headers.get('X-Forwarded-Host',  request.host)
-    base  = f"{proto}://{host}/play/pluto/{channel_id}/x11-seg/"
-
-    manifest = get_hls_manifest(channel_id, base)
-    if not manifest:
-        release_client(channel_id)
-        return Response('Manifest not ready', status=503)
-
-    release_client(channel_id)
     return Response(
-        manifest,
-        mimetype='application/vnd.apple.mpegurl',
+        stream_with_context(stream_channel(channel_id, pluto_web_url)),
+        mimetype='video/MP2T',
         headers={
             'Cache-Control':              'no-cache, no-store, must-revalidate',
             'Access-Control-Allow-Origin': '*',
@@ -1011,30 +1001,18 @@ def pluto_x11_manifest(channel_id: str):
 
 @play_bp.route('/play/pluto/<channel_id>/x11-seg/<segment>')
 def pluto_x11_segment(channel_id: str, segment: str):
-    """Serve an HLS segment file from the session's temp directory."""
-    from ..scrapers.pluto_x11 import get_segment_path, ENABLED as _X11_ENABLED
-
-    if not _X11_ENABLED:
-        abort(503)
-
-    seg_path = get_segment_path(channel_id, segment)
-    if not seg_path:
-        abort(404)
-
+    """Legacy HLS segment endpoint retained so stale clients get a clear error."""
     return Response(
-        open(seg_path, 'rb').read(),
-        mimetype='video/MP2T',
-        headers={
-            'Cache-Control':              'no-cache, no-store',
-            'Access-Control-Allow-Origin': '*',
-        },
+        'Pluto X11 HLS segment mode is unavailable; use x11.ts MPEG-TS streaming.',
+        status=501,
+        mimetype='text/plain',
     )
 
 
 # Legacy MPEG-TS endpoint — redirects to HLS manifest for backward compat
 @play_bp.route('/play/pluto/<channel_id>/x11.ts')
 def pluto_x11_stream(channel_id: str):
-    return redirect(f'/play/pluto/{channel_id}/x11.m3u8', code=302)
+    return _pluto_x11_stream_response(channel_id)
 
 
 @play_bp.route('/play/pluto/x11/status')
