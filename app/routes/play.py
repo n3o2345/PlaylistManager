@@ -945,71 +945,103 @@ def play(source_name: str, channel_id: str):
 
 
 # =============================================================================
-# Pluto X11 screen-grab routes
+# Pluto X11 screen-grab routes — HLS-to-disk pipeline (mirrors philoproxy)
 # =============================================================================
 
-@play_bp.route('/play/pluto/<channel_id>/x11.ts')
-def pluto_x11_stream(channel_id: str):
-    """
-    Stream a Pluto TV channel via X11 screen-grab instead of HLS.
-
-    Bypasses Pluto's SSAI token rotation entirely — the Pluto web player runs
-    inside a headless Xvfb display and ffmpeg x11grabs the screen to MPEG-TS.
-    Commercial breaks still play but never cause 403 / black-screen artefacts.
-
-    GPU encoding is used when available (NVENC → VAAPI → libx264 fallback).
-    Multiple concurrent clients on the same channel share one ffmpeg process.
-    """
-    from ..scrapers.pluto_x11 import stream_channel, ENABLED as _X11_ENABLED
-
-    if not _X11_ENABLED:
-        abort(503)   # disabled via PLUTO_X11_ENABLED=0
-
-    channel = (
+def _pluto_x11_get_channel(channel_id: str):
+    return (
         Channel.query
         .join(Source)
         .filter(Source.name == 'pluto', Channel.source_channel_id == channel_id)
         .first()
     )
+
+
+@play_bp.route('/play/pluto/<channel_id>/x11.m3u8')
+def pluto_x11_manifest(channel_id: str):
+    """
+    HLS manifest for a Pluto TV X11 screen-grab session.
+    Starts the session on first request, waits up to 60 s for first segments,
+    then returns the manifest with segment URLs rewritten to point at /x11-seg/.
+    Mirrors philoproxy stream.js _handlePhiloM3u8Request() exactly.
+    """
+    from ..scrapers.pluto_x11 import (
+        get_or_create_session, wait_for_segments,
+        get_hls_manifest, release_client, ENABLED as _X11_ENABLED,
+    )
+
+    if not _X11_ENABLED:
+        abort(503)
+
+    channel = _pluto_x11_get_channel(channel_id)
     if not channel:
         abort(404)
 
-    # Build the Pluto web player URL using the channel slug
     slug = channel.slug or channel_id
     pluto_web_url = f"https://pluto.tv/live-tv/{slug}"
 
-    logger.info(
-        '[pluto-x11] client=%s channel=%s slug=%s',
-        _client_ip(), channel_id, slug,
-    )
+    logger.info('[pluto-x11] client=%s channel=%s slug=%s',
+                _client_ip(), channel_id, slug)
 
-    source_config = channel.source.config or {}
-    pluto_email    = source_config.get('username') or None
-    pluto_password = source_config.get('password') or None
+    sess = get_or_create_session(channel_id, pluto_web_url)
 
+    if not wait_for_segments(channel_id, timeout=60.0):
+        release_client(channel_id)
+        return Response('Stream failed to start within 60 s', status=503)
+
+    proto = request.headers.get('X-Forwarded-Proto', request.scheme)
+    host  = request.headers.get('X-Forwarded-Host',  request.host)
+    base  = f"{proto}://{host}/play/pluto/{channel_id}/x11-seg/"
+
+    manifest = get_hls_manifest(channel_id, base)
+    if not manifest:
+        release_client(channel_id)
+        return Response('Manifest not ready', status=503)
+
+    release_client(channel_id)
     return Response(
-        stream_with_context(stream_channel(channel_id, pluto_web_url,
-                                           email=pluto_email, password=pluto_password)),
-        mimetype='video/mp2t',
+        manifest,
+        mimetype='application/vnd.apple.mpegurl',
         headers={
-            'Cache-Control':    'no-cache',
-            'X-Accel-Buffering': 'no',   # tell nginx not to buffer this
+            'Cache-Control':              'no-cache, no-store, must-revalidate',
+            'Access-Control-Allow-Origin': '*',
         },
     )
 
 
+@play_bp.route('/play/pluto/<channel_id>/x11-seg/<segment>')
+def pluto_x11_segment(channel_id: str, segment: str):
+    """Serve an HLS segment file from the session's temp directory."""
+    from ..scrapers.pluto_x11 import get_segment_path, ENABLED as _X11_ENABLED
+
+    if not _X11_ENABLED:
+        abort(503)
+
+    seg_path = get_segment_path(channel_id, segment)
+    if not seg_path:
+        abort(404)
+
+    return Response(
+        open(seg_path, 'rb').read(),
+        mimetype='video/MP2T',
+        headers={
+            'Cache-Control':              'no-cache, no-store',
+            'Access-Control-Allow-Origin': '*',
+        },
+    )
+
+
+# Legacy MPEG-TS endpoint — redirects to HLS manifest for backward compat
+@play_bp.route('/play/pluto/<channel_id>/x11.ts')
+def pluto_x11_stream(channel_id: str):
+    return redirect(f'/play/pluto/{channel_id}/x11.m3u8', code=302)
+
+
 @play_bp.route('/play/pluto/x11/status')
 def pluto_x11_status():
-    """
-    JSON endpoint listing active Pluto X11 grab sessions.
-    Useful for debugging — shows encoder, reader count, and idle time.
-    """
     import json
     from ..scrapers.pluto_x11 import active_sessions, ENABLED as _X11_ENABLED
     return Response(
-        json.dumps({
-            "enabled":  _X11_ENABLED,
-            "sessions": active_sessions(),
-        }, indent=2),
+        json.dumps({"enabled": _X11_ENABLED, "sessions": active_sessions()}, indent=2),
         mimetype='application/json',
     )
