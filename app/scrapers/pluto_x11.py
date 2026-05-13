@@ -31,6 +31,7 @@ The main process reads the result, then sends "STOP\n" to tear down on cleanup.
 """
 from __future__ import annotations
 
+import json as _json_mod
 import logging
 import multiprocessing
 import os
@@ -40,6 +41,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -60,6 +62,33 @@ FORCE_ENCODER   = os.environ.get("PLUTO_X11_ENCODER", "").strip().lower() or Non
 CHUNK_SIZE      = 65536
 MAX_QUEUE_DEPTH = 64
 COOKIE_PATH     = os.environ.get("PLUTO_X11_COOKIE_PATH", "/tmp/pluto_x11_cookies.json")
+
+# ---------------------------------------------------------------------------
+# Pluto TV REST API constants
+# ---------------------------------------------------------------------------
+
+# Mirrors the Pluto web app boot JWT so the API accepts our requests.
+_PLUTO_APP_VERSION    = "9.21.0-bf9f5b43699337428 59f3b2581c9351109 22f642"
+_PLUTO_DEVICE_VERSION = "148.0.0"
+_PLUTO_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
+)
+_PLUTO_BASE_HEADERS = {
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": _PLUTO_UA,
+    "Origin": "https://pluto.tv",
+    "Referer": "https://pluto.tv/",
+    "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+}
+# Persistent client UUID — generated once, reused so Pluto recognises the device.
+_CLIENT_ID_PATH = os.environ.get("PLUTO_X11_CLIENT_ID_PATH", "/tmp/pluto_x11_client_id")
 
 # ---------------------------------------------------------------------------
 # Playwright worker script — runs in a fresh child process, no gevent
@@ -150,15 +179,56 @@ def main():
         result_pipe.flush()
         return
 
-    # ── Inject stored cookies (skips login modal when valid) ────────────────
+    # ── Inject stored cookies + API auth token ──────────────────────────────
+    # The cookie file may contain a special "_pluto_x11_authtoken" entry written
+    # by login_and_store_cookies() when it authenticates via the REST API.
+    # Extract it, inject real cookies into the browser context, then:
+    #   1. add_init_script — sets common localStorage keys before page JS runs
+    #      so Pluto's React app boots into an authenticated state.
+    #   2. context.route — adds Authorization header to every Pluto API request
+    #      in case the app reads auth from headers rather than localStorage.
+    _auth_token = None
     if cookie_path:
         try:
             with open(cookie_path) as _cf:
                 _stored = json.load(_cf)
-            if _stored:
-                context.add_cookies(_stored)
+            _real_cookies = [c for c in _stored if c.get("name") != "_pluto_x11_authtoken"]
+            for _c in _stored:
+                if _c.get("name") == "_pluto_x11_authtoken":
+                    _auth_token = _c["value"]
+                    break
+            if _real_cookies:
+                context.add_cookies(_real_cookies)
         except Exception:
             pass  # missing / corrupt cookie file — fall through to modal login
+
+    if _auth_token:
+        # localStorage injection: runs before Pluto React boots on every navigation
+        _init_js = (
+            "(()=>{"
+            "const tok="" + _auth_token + "";"
+            "const keys=["plutotv-userToken","userToken","sessionToken","
+            ""authorizationToken","pluto_session","pluto.tv:userToken"];"
+            "try{for(const k of keys){try{localStorage.setItem(k,tok);}catch(e){}}}catch(e){}"
+            "})();"
+        )
+        context.add_init_script(_init_js)
+
+        # Route interception: adds auth header to every Pluto service call
+        def _auth_route(route, _t=_auth_token):
+            try:
+                hdrs = dict(route.request.headers)
+                if "authorization" not in hdrs:
+                    hdrs["authorization"] = "Bearer " + _t
+                route.continue_(headers=hdrs)
+            except Exception:
+                try:
+                    route.continue_()
+                except Exception:
+                    pass
+        context.route("**service-users.clusters.pluto.tv/**", _auth_route)
+        context.route("**boot.pluto.tv/**", _auth_route)
+        context.route("**api.pluto.tv/**", _auth_route)
 
     try:
         page.goto(pluto_url, wait_until="domcontentloaded", timeout=30000)
@@ -1639,24 +1709,195 @@ with open(_PW_LOGIN_WORKER_PATH, "w") as _lf:
 
 
 # ---------------------------------------------------------------------------
+# Pluto TV REST API login (no browser — bypasses Akamai bot detection)
+# ---------------------------------------------------------------------------
+
+def _get_or_create_client_id() -> str:
+    """Return a persistent client UUID, creating one on first use."""
+    try:
+        if os.path.exists(_CLIENT_ID_PATH):
+            cid = open(_CLIENT_ID_PATH).read().strip()
+            if cid:
+                return cid
+    except Exception:
+        pass
+    cid = str(uuid.uuid4())
+    try:
+        open(_CLIENT_ID_PATH, "w").write(cid)
+    except Exception:
+        pass
+    return cid
+
+
+def _pluto_boot() -> tuple[str, object]:
+    """
+    GET boot.pluto.tv/v4/start → anonymous session JWT.
+    Returns (session_token, requests.Session).
+    Raises RuntimeError on failure.
+    """
+    try:
+        import requests as _req
+    except ImportError:
+        raise RuntimeError("requests library not installed; run: pip install requests")
+
+    client_id = _get_or_create_client_id()
+    session = _req.Session()
+    session.headers.update(_PLUTO_BASE_HEADERS)
+
+    params = {
+        "appName":           "web",
+        "appVersion":        _PLUTO_APP_VERSION,
+        "deviceVersion":     _PLUTO_DEVICE_VERSION,
+        "deviceMake":        "edge-chromium",
+        "deviceModel":       "web",
+        "deviceType":        "web",
+        "clientID":          client_id,
+        "clientModelNumber": "1.0",
+        "serverSideAds":     "false",
+        "constraints":       "",
+        "drmCapabilities":   "widevine:L3",
+        "clientTime":        str(int(time.time() * 1000)),
+    }
+    try:
+        resp = session.get("https://boot.pluto.tv/v4/start",
+                           params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        raise RuntimeError(f"boot request failed: {exc}") from exc
+
+    token = (data.get("sessionToken")
+             or data.get("authorizationToken")
+             or (data.get("sessionInformation") or {}).get("sessionToken"))
+    if not token:
+        raise RuntimeError(f"boot: no sessionToken in response keys={list(data.keys())}")
+
+    return token, session
+
+
+def _pluto_api_login(email: str, password: str, cookie_path: str) -> dict:
+    """
+    Authenticate with Pluto TV's REST API directly — no browser, no Akamai.
+
+    Flow:
+      1. GET  boot.pluto.tv/v4/start              → anonymous boot JWT
+      2. POST service-users.clusters.pluto.tv/v4/auth?sync=true
+             Authorization: Bearer <boot_jwt>
+             Body: {"userIdentity": email, "password": password}
+         → authenticated JWT with userID populated
+
+    Saves result to cookie_path in Playwright cookie format, including a
+    synthetic "_pluto_x11_authtoken" entry the streaming worker uses for
+    localStorage injection and API request interception.
+
+    Returns {"ok": True, "cookies": N} or {"ok": False, "error": "..."}.
+    """
+    try:
+        boot_token, session = _pluto_boot()
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    auth_headers = {
+        **_PLUTO_BASE_HEADERS,
+        "Authorization":  f"Bearer {boot_token}",
+        "Content-Type":   "application/json; charset=utf8",
+    }
+    try:
+        resp = session.post(
+            "https://service-users.clusters.pluto.tv/v4/auth",
+            params={"sync": "true"},
+            headers=auth_headers,
+            json={"userIdentity": email, "password": password},
+            timeout=15,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"auth request failed: {exc}"}
+
+    if resp.status_code == 401:
+        return {"ok": False, "error": "invalid credentials (401)"}
+    if resp.status_code == 403:
+        return {"ok": False, "error": "account locked or region-blocked (403)"}
+    if not resp.ok:
+        return {"ok": False, "error": f"auth failed: HTTP {resp.status_code}"}
+
+    try:
+        data = resp.json()
+    except Exception as exc:
+        return {"ok": False, "error": f"auth response not JSON: {exc}"}
+
+    auth_token = (data.get("sessionToken")
+                  or data.get("authorizationToken")
+                  or data.get("token"))
+    if not auth_token:
+        return {"ok": False, "error": f"auth: no token in response keys={list(data.keys())}"}
+
+    # Build Playwright-format cookie list from the requests session cookies
+    # plus the synthetic auth-token entry the streaming worker reads.
+    pw_cookies: list[dict] = []
+    for c in session.cookies:
+        pw_cookies.append({
+            "name":     c.name,
+            "value":    c.value,
+            "domain":   c.domain or ".pluto.tv",
+            "path":     c.path or "/",
+            "expires":  int(c.expires) if c.expires else -1,
+            "httpOnly": bool(c._rest.get("HttpOnly", False)),
+            "secure":   bool(c.secure),
+            "sameSite": "None",
+        })
+
+    # Synthetic entry: the streaming worker extracts this to inject the JWT
+    # into localStorage and API request headers without another login round-trip.
+    pw_cookies.append({
+        "name":     "_pluto_x11_authtoken",
+        "value":    auth_token,
+        "domain":   ".pluto.tv",
+        "path":     "/",
+        "expires":  -1,
+        "httpOnly": False,
+        "secure":   True,
+        "sameSite": "None",
+    })
+
+    try:
+        os.makedirs(os.path.dirname(cookie_path) or ".", exist_ok=True)
+        with open(cookie_path, "w") as _f:
+            _json_mod.dump(pw_cookies, _f)
+    except Exception as exc:
+        return {"ok": False, "error": f"cookie save failed: {exc}"}
+
+    logger.info("[pluto-x11] API login OK — %d cookies + auth token saved to %s",
+                len(pw_cookies), cookie_path)
+    return {"ok": True, "cookies": len(pw_cookies)}
+
+
+# ---------------------------------------------------------------------------
 # Public API — settings / login helpers
 # ---------------------------------------------------------------------------
 
 def login_and_store_cookies(email: str, password: str,
                             cookie_path: str | None = None) -> dict:
     """
-    Perform a real headless login to Pluto TV and persist the resulting
-    cookies to *cookie_path* (default: COOKIE_PATH).
+    Authenticate with Pluto TV and persist credentials to *cookie_path*.
+
+    Tries the direct REST API first (fast, ~1 s, no bot detection risk).
+    Falls back to the headless Playwright worker only if the API path fails.
 
     Returns ``{"ok": True, "cookies": N}`` on success, or
     ``{"ok": False, "error": "..."}`` on failure.
-
-    This is the function your settings page should call after the user
-    submits credentials.  It is synchronous and blocks for up to ~60 s.
     """
     cookie_path = cookie_path or COOKIE_PATH
-    result_r, result_w = os.pipe()
 
+    # ── Fast path: direct REST API (no browser, no Akamai) ─────────────────
+    result = _pluto_api_login(email, password, cookie_path)
+    if result["ok"]:
+        return result
+
+    api_err = result.get("error", "unknown")
+    logger.warning("[pluto-x11] API login failed (%s) — falling back to Playwright", api_err)
+
+    # ── Fallback: headless Playwright worker ────────────────────────────────
+    result_r, result_w = os.pipe()
     proc = subprocess.Popen(
         [
             sys.executable, _PW_LOGIN_WORKER_PATH,
@@ -1686,7 +1927,7 @@ def login_and_store_cookies(email: str, password: str,
                     n = int(part.split("=", 1)[1])
                 except ValueError:
                     pass
-        logger.info("[pluto-x11] login succeeded — %d cookies stored at %s", n, cookie_path)
+        logger.info("[pluto-x11] Playwright login OK — %d cookies stored", n)
         return {"ok": True, "cookies": n}
     else:
         err = line.strip()
@@ -1696,9 +1937,9 @@ def login_and_store_cookies(email: str, password: str,
                 stderr_out = proc.stderr.read().decode(errors="replace").strip()[:300]
             except Exception:
                 pass
-            err = f"no output from worker" + (f" | stderr: {stderr_out}" if stderr_out else "")
-        logger.error("[pluto-x11] login failed: %s", err)
-        return {"ok": False, "error": err}
+            err = "no output from worker" + (f" | stderr: {stderr_out}" if stderr_out else "")
+        logger.error("[pluto-x11] login failed (API: %s) (Playwright: %s)", api_err, err)
+        return {"ok": False, "error": f"API: {api_err} | Playwright: {err}"}
 
 
 def verify_login(cookie_path: str | None = None) -> dict:
@@ -1725,8 +1966,10 @@ def verify_login(cookie_path: str | None = None) -> dict:
         return {"ok": False, "reason": "cookie file is empty"}
 
     now = _time.time()
+    # _pluto_x11_authtoken is the synthetic entry written by _pluto_api_login().
+    # It is always valid as long as it exists (Pluto JWTs last ~24 h).
     auth_names = {"plutotv-userToken", "__session", "pluto-session",
-                  "userToken", "authToken", "token"}
+                  "userToken", "authToken", "token", "_pluto_x11_authtoken"}
     found_auth = False
     for c in cookies:
         if c.get("name") in auth_names:
@@ -1736,12 +1979,13 @@ def verify_login(cookie_path: str | None = None) -> dict:
             found_auth = True
 
     if not found_auth:
-        # We have cookies but none are named auth tokens — treat as logged-in
-        # (Pluto may rename them) but flag it
+        # Cookies present but no recognised auth token — warn but don't block
         logger.warning("[pluto-x11] verify_login: no known auth cookie names found; "
                        "assuming valid (%d cookies)", len(cookies))
 
-    return {"ok": True, "cookies": len(cookies)}
+    # Report real cookie count excluding the synthetic token entry
+    real_n = sum(1 for c in cookies if c.get("name") != "_pluto_x11_authtoken")
+    return {"ok": True, "cookies": real_n}
 
 
 def clear_cookies(cookie_path: str | None = None) -> None:
