@@ -1,38 +1,47 @@
 """
 app/scrapers/pluto_x11.py
 
-Pluto TV X11 screen-grab streamer — HLS-to-disk pipeline.
+Pluto TV X11 screen-grab streamer.
 
-Mirrors the philoproxy stream.js architecture exactly:
-  Xvfb (+GLX +render -noreset)
-    └─ Playwright Chromium (non-headless, subprocess — gevent-safe)
-         └─ CSS injection / CDP fullscreen / keepalive
-  PulseAudio null sink (per-session)
-  ffmpeg  x11grab + pulse → HLS segments on disk
-    └─ Flask serves index.m3u8 + .ts segments directly
+Architecture
+------------
+  Xvfb  (:DISPLAY)
+    └─ Playwright Chromium  (non-headless, run in a subprocess — gevent-safe)
+         └─ CSS injection   (hides UI chrome, fullscreens <video>)
+         └─ CDP fullscreen  (removes browser chrome)
+         └─ keepalive loop  (dismisses overlays, resumes paused video)
+  PulseAudio null sink  (virtual audio, per-session)
+  ffmpeg  x11grab + pulse → h264 → MPEG-TS pipe
+    └─ _BroadcastPipe (fan-out to N concurrent readers)
 
-Why HLS-to-disk instead of MPEG-TS pipe:
-  - Client gets the manifest immediately and starts playing with the first
-    segment — no blocking wait for a pipe to fill
-  - Faster perceived startup (same reason philo loads quickly)
-  - Segments are served as static files — no streaming generator needed
-  - Auto-recovery: ffmpeg restarts without disconnecting clients
+Gevent compatibility
+--------------------
+gevent monkey-patches threading.Thread so sync_playwright() still detects the
+asyncio event loop even inside a "new thread".  The only reliable fix is to run
+Playwright in a true child process via multiprocessing (spawn context), which
+has a clean interpreter state with no gevent patching and no asyncio loop.
 
-Gevent safety:
-  Playwright sync API is called from a subprocess (pluto_pw_worker.py) so
-  gevent's monkey-patching of threading never affects it.
+_PW_WORKER_SCRIPT is written to a temp file and executed as:
+    python3 /tmp/pluto_pw_worker.py <display> <pulse_socket|none> <url> <result_pipe_fd>
+
+The worker navigates Chromium, injects CSS, applies CDP fullscreen, waits for
+the video element to start playing, then writes "OK\n" (or "ERR <msg>\n") to
+the result pipe and blocks reading a "STOP\n" command from the control pipe.
+The main process reads the result, then sends "STOP\n" to tear down on cleanup.
 """
 from __future__ import annotations
 
+import json as _json_mod
 import logging
+import multiprocessing
 import os
 import queue
-import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -42,31 +51,51 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-ENABLED         = os.environ.get("PLUTO_X11_ENABLED",      "1") != "0"
-DISPLAY_W       = int(os.environ.get("PLUTO_X11_WIDTH",    "1280"))
-DISPLAY_H       = int(os.environ.get("PLUTO_X11_HEIGHT",   "720"))
-FRAMERATE       = int(os.environ.get("PLUTO_X11_FPS",      "30"))
-BITRATE         = os.environ.get("PLUTO_X11_BITRATE",      "4M")
-IDLE_TIMEOUT    = int(os.environ.get("PLUTO_X11_IDLE_TIMEOUT", "300"))  # 5 min
-STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "20"))
+ENABLED         = os.environ.get("PLUTO_X11_ENABLED", "1") != "0"
+DISPLAY_W       = int(os.environ.get("PLUTO_X11_WIDTH",        "1280"))
+DISPLAY_H       = int(os.environ.get("PLUTO_X11_HEIGHT",       "720"))
+FRAMERATE       = int(os.environ.get("PLUTO_X11_FPS",          "30"))
+BITRATE         = os.environ.get("PLUTO_X11_BITRATE",          "2500k")
+IDLE_TIMEOUT    = int(os.environ.get("PLUTO_X11_IDLE_TIMEOUT", "30"))
+STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "12"))
 FORCE_ENCODER   = os.environ.get("PLUTO_X11_ENCODER", "").strip().lower() or None
-LOW_LATENCY     = os.environ.get("PLUTO_X11_LOW_LATENCY", "0") in ("1","true","yes","on")
-
-# HLS tuning — mirrors philo stream.js getHlsTuning()
-HLS_TIME      = "1" if LOW_LATENCY else "2"
-HLS_LIST_SIZE = "3" if LOW_LATENCY else "5"
-HLS_FLAGS     = (
-    "delete_segments+append_list+omit_endlist+split_by_time+program_date_time"
-    if LOW_LATENCY else
-    "delete_segments+append_list+omit_endlist+split_by_time"
-)
+CHUNK_SIZE      = 65536
+MAX_QUEUE_DEPTH = 64
+COOKIE_PATH     = os.environ.get("PLUTO_X11_COOKIE_PATH", "/tmp/pluto_x11_cookies.json")
 
 # ---------------------------------------------------------------------------
-# Playwright worker script — child process, immune to gevent patching
+# Pluto TV REST API constants
+# ---------------------------------------------------------------------------
+
+# Mirrors the Pluto web app boot JWT so the API accepts our requests.
+_PLUTO_APP_VERSION    = "9.21.0-bf9f5b43699337428 59f3b2581c9351109 22f642"
+_PLUTO_DEVICE_VERSION = "148.0.0"
+_PLUTO_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
+)
+_PLUTO_BASE_HEADERS = {
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": _PLUTO_UA,
+    "Origin": "https://pluto.tv",
+    "Referer": "https://pluto.tv/",
+    "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+}
+# Persistent client UUID — generated once, reused so Pluto recognises the device.
+_CLIENT_ID_PATH = os.environ.get("PLUTO_X11_CLIENT_ID_PATH", "/tmp/pluto_x11_client_id")
+
+# ---------------------------------------------------------------------------
+# Playwright worker script — runs in a fresh child process, no gevent
 # ---------------------------------------------------------------------------
 
 _PW_WORKER_SCRIPT = r'''
-import os, sys, time, select
+import os, sys, time, json
 
 def main():
     display_num  = int(sys.argv[1])
@@ -77,24 +106,12 @@ def main():
     display_w    = int(sys.argv[6])
     display_h    = int(sys.argv[7])
     startup_wait = int(sys.argv[8])
+    pluto_email    = sys.argv[9]  if len(sys.argv) > 9  and sys.argv[9]  != "none" else None
+    pluto_password = sys.argv[10] if len(sys.argv) > 10 and sys.argv[10] != "none" else None
+    cookie_path    = sys.argv[11] if len(sys.argv) > 11 and sys.argv[11] != "none" else None
 
     result_pipe  = os.fdopen(result_fd,  "w", buffering=1)
     control_pipe = os.fdopen(control_fd, "r")
-
-    FULLSCREEN_CSS = """
-        [class*="overlay"],[class*="Overlay"],[class*="controls"],[class*="Controls"],
-        [class*="nav"],[class*="Nav"],[class*="header"],[class*="Header"],
-        [class*="banner"],[class*="Badge"],[class*="modal"],[class*="Modal"],
-        [class*="stillWatching"],[class*="adOverlay"],[class*="pauseScreen"],
-        [class*="endCard"],[class*="spinner"],[class*="Spinner"],
-        [class*="loading"],[class*="Loading"]
-        { opacity:0!important; visibility:hidden!important; pointer-events:none!important; }
-        video { position:fixed!important; top:0!important; left:0!important;
-                width:100vw!important; height:100vh!important; z-index:99999!important;
-                object-fit:cover!important; background:#000!important; }
-        body  { background:#000!important; overflow:hidden!important; margin:0!important; }
-        *     { cursor:none!important; }
-    """
 
     try:
         from playwright.sync_api import sync_playwright
@@ -114,19 +131,24 @@ def main():
             "XDG_RUNTIME_DIR":    pulse_dir,
         })
 
-    # Mirrors philo.js getStreamBrowser() args exactly
     pw_args = [
         "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-        "--disable-gpu", "--disable-software-rasterizer",
+        # NOTE: do NOT add --disable-gpu — it prevents video from rendering on Xvfb
         "--autoplay-policy=no-user-gesture-required",
         "--disable-blink-features=AutomationControlled",
         "--no-first-run", "--no-default-browser-check",
+        "--lang=en-US,en",
         "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
         "--disable-infobars", "--disable-notifications", "--hide-scrollbars",
         "--start-maximized", "--start-fullscreen",
         f"--window-size={display_w},{display_h}", "--window-position=0,0",
         "--disable-session-crashed-bubble", "--hide-crash-restore-bubble",
         "--disable-features=MediaSessionService,HardwareMediaKeyHandling",
+        # Software rendering for Xvfb (no real GPU available)
+        "--use-gl=swiftshader",
+        "--use-angle=swiftshader-webgl",
+        "--ignore-gpu-blocklist",
+        "--enable-unsafe-webgpu",
     ]
 
     try:
@@ -139,11 +161,75 @@ def main():
             ),
             viewport={"width": display_w, "height": display_h},
         )
+        # Stealth: mask Playwright fingerprints before any page JS runs
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            if (!window.chrome) {
+                window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}};
+            }
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+        """)
         page = context.new_page()
     except Exception as e:
         result_pipe.write(f"ERR launch failed: {e}\n")
         result_pipe.flush()
         return
+
+    # ── Inject stored cookies + API auth token ──────────────────────────────
+    # The cookie file may contain a special "_pluto_x11_authtoken" entry written
+    # by login_and_store_cookies() when it authenticates via the REST API.
+    # Extract it, inject real cookies into the browser context, then:
+    #   1. add_init_script — sets common localStorage keys before page JS runs
+    #      so Pluto's React app boots into an authenticated state.
+    #   2. context.route — adds Authorization header to every Pluto API request
+    #      in case the app reads auth from headers rather than localStorage.
+    _auth_token = None
+    if cookie_path:
+        try:
+            with open(cookie_path) as _cf:
+                _stored = json.load(_cf)
+            _real_cookies = [c for c in _stored if c.get("name") != "_pluto_x11_authtoken"]
+            for _c in _stored:
+                if _c.get("name") == "_pluto_x11_authtoken":
+                    _auth_token = _c["value"]
+                    break
+            if _real_cookies:
+                context.add_cookies(_real_cookies)
+        except Exception:
+            pass  # missing / corrupt cookie file — fall through to modal login
+
+    if _auth_token:
+        # localStorage injection: runs before Pluto React boots on every navigation.
+        # json.dumps() handles the JWT encoding; single-quote JS keys need no escaping.
+        _init_js = (
+            "(()=>{"
+            "const tok=" + json.dumps(_auth_token) + ";"
+            "['plutotv-userToken','userToken','sessionToken',"
+            "'authorizationToken','pluto_session','pluto.tv:userToken']"
+            ".forEach(k=>{try{localStorage.setItem(k,tok);}catch(e){}});"
+            "})();"
+        )
+        context.add_init_script(_init_js)
+
+        # Route interception: adds auth header to every Pluto service call
+        def _auth_route(route, _t=_auth_token):
+            try:
+                hdrs = dict(route.request.headers)
+                if "authorization" not in hdrs:
+                    hdrs["authorization"] = "Bearer " + _t
+                route.continue_(headers=hdrs)
+            except Exception:
+                try:
+                    route.continue_()
+                except Exception:
+                    pass
+        context.route("**service-users.clusters.pluto.tv/**", _auth_route)
+        context.route("**boot.pluto.tv/**", _auth_route)
+        context.route("**api.pluto.tv/**", _auth_route)
 
     try:
         page.goto(pluto_url, wait_until="domcontentloaded", timeout=30000)
@@ -153,23 +239,236 @@ def main():
         except Exception:
             pass
 
-    page.wait_for_timeout(2000)
-
-    # Inject fullscreen CSS
+    # Wait for React to hydrate: watch for a video element rather than sleeping
+    # blindly.  Falls back to a 3 s cap if the video element never appears
+    # (e.g. login wall is blocking).
     try:
-        page.evaluate(f"""() => {{
+        page.wait_for_selector("video", state="attached", timeout=6000)
+    except Exception:
+        page.wait_for_timeout(3000)
+
+    # ── Pre-login modal: "Continue / Limit features" upsell ────────────────
+    # This modal appears BEFORE the sign-in form and blocks it entirely.
+    # Must be dismissed first.  The "Continue" button leads to the sign-in
+    # form; "Limit features" skips login (we don't want that).
+    _upsell_deadline = time.monotonic() + 8
+    while time.monotonic() < _upsell_deadline:
+        try:
+            _dismissed = page.evaluate("""() => {
+                for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                    const t = (btn.textContent || '').trim().toLowerCase();
+                    // Click "Continue" (not "Limit features") to get to sign-in
+                    if (t === 'continue' && btn.offsetParent !== null) {
+                        btn.click(); return true;
+                    }
+                }
+                return false;
+            }""")
+            if _dismissed:
+                time.sleep(1.0)  # let sign-in form animate in
+                break
+        except Exception:
+            pass
+        time.sleep(0.4)
+
+    # ── Login modal handling ────────────────────────────────────────────────
+    # Must happen BEFORE CSS injection so the modal still has pointer-events.
+    if pluto_email and pluto_password:
+        _login_attempted = False
+        _login_deadline  = time.monotonic() + 20
+
+        def _pw_type_into(selector, value):
+            """
+            Type value into a React input.
+
+            Uses page.keyboard.type() which routes through CDP insertText —
+            fully layout-independent so !@#$%^ all land correctly regardless
+            of the Xvfb keyboard layout.  Falls back to the React native-setter
+            JS trick if the locator interaction fails.
+            """
+            import random as _r
+            try:
+                loc = page.locator(selector).first
+                loc.click(timeout=4000)
+                time.sleep(0.1)
+                loc.press("Control+a")
+                time.sleep(0.05)
+                loc.press("Backspace")
+                time.sleep(0.05)
+                # keyboard.type() uses CDP insertText — layout-independent,
+                # handles !@#$%^&*()_ without needing Shift key simulation
+                page.keyboard.type(value, delay=_r.randint(60, 110))
+                time.sleep(0.15)
+                return True
+            except Exception:
+                pass
+            # JS fallback: React native setter via prototype override
+            # Works when locator interaction itself fails (e.g. focus issues)
+            try:
+                first_sub = selector.split(",")[0].strip()
+                page.evaluate("""([sel, val]) => {
+                    const inp = document.querySelector(sel);
+                    if (!inp) return false;
+                    inp.focus();
+                    const setter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value').set;
+                    setter.call(inp, val);
+                    inp.dispatchEvent(new Event('input',  {bubbles: true}));
+                    inp.dispatchEvent(new Event('change', {bubbles: true}));
+                    inp.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true}));
+                    return true;
+                }""", [first_sub, value])
+                return True
+            except Exception:
+                return False
+
+        _EMAIL_SEL = ('input[placeholder="Enter your email"], '
+                      'input[type="email"], input[name="email"], '
+                      'input[placeholder*="email" i]')
+        _PW_SEL    = ('input[name="password"], input[id="password"], '
+                      'input[type="password"], input[placeholder*="password" i]')
+
+        while time.monotonic() < _login_deadline:
+            try:
+                _has_email = page.evaluate(f"""() => {{
+                    const inp = document.querySelector('{_EMAIL_SEL.split(",")[0].strip()}');
+                    return !!(inp && inp.offsetParent !== null);
+                }}""")
+            except Exception:
+                _has_email = False
+
+            if _has_email:
+                # Fill email with keystroke typing (React synthetic events)
+                _pw_type_into(_EMAIL_SEL, pluto_email)
+                time.sleep(0.3)
+                # Click Next
+                try:
+                    page.evaluate("""() => {
+                        for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                            const t = (btn.textContent||'').trim().toLowerCase();
+                            if (t === 'next' || t === 'continue') {
+                                if (btn.offsetParent !== null) { btn.click(); return; }
+                            }
+                        }
+                    }""")
+                except Exception:
+                    pass
+                try:
+                    page.locator(_EMAIL_SEL).first.press("Enter")
+                except Exception:
+                    pass
+                # Wait for password field
+                _pw_deadline = time.monotonic() + 12
+                while time.monotonic() < _pw_deadline:
+                    try:
+                        _pw_ready = page.evaluate("""() => {
+                            const inp = document.querySelector('input[type="password"]');
+                            return !!(inp && inp.offsetParent !== null);
+                        }""")
+                    except Exception:
+                        _pw_ready = False
+                    if _pw_ready:
+                        time.sleep(0.4)
+                        _pw_type_into(_PW_SEL, pluto_password)
+                        time.sleep(0.4)
+                        # Click Sign In
+                        try:
+                            page.get_by_role("button", name="Sign In").click(timeout=3000)
+                        except Exception:
+                            try:
+                                page.evaluate("""() => {
+                                    for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                                        const t = (btn.textContent||'').trim().toLowerCase();
+                                        if (['sign in','log in','login','signin','submit'].includes(t)
+                                            && btn.offsetParent !== null) { btn.click(); return; }
+                                    }
+                                }""")
+                            except Exception:
+                                pass
+                            try:
+                                page.locator(_PW_SEL).first.press("Enter")
+                            except Exception:
+                                pass
+                        _login_attempted = True
+                        break
+                    time.sleep(0.5)
+                break
+
+            # If no email field, check for the "Continue" upsell again
+            try:
+                page.evaluate("""() => {
+                    for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                        const t = (btn.textContent || '').trim().toLowerCase();
+                        if (t === 'continue' && btn.offsetParent !== null) { btn.click(); return; }
+                    }
+                }""")
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        if _login_attempted:
+            time.sleep(2)   # let Pluto redirect / close modal
+
+    # ── Fullscreen CSS: hide all UI chrome, make video fill the display ───────
+    # IMPORTANT: Do NOT use broad [class*="modal"] — Pluto's video player root
+    # carries a class with "Modal" in its name and will be hidden.  Use only
+    # specific known overlay/control class fragments.
+    try:
+        page.evaluate("""() => {
             if (document.getElementById('pluto-x11-fs')) return;
             const s = document.createElement('style');
             s.id = 'pluto-x11-fs';
-            s.textContent = `{FULLSCREEN_CSS}`;
+            s.textContent = `
+                [class*="overlay"],[class*="Overlay"],
+                [class*="PlayerControls"],[class*="playerControls"],
+                [class*="ControlBar"],[class*="controlBar"],
+                [class*="TopBar"],[class*="topBar"],
+                [class*="nav"],[class*="Nav"],[class*="header"],[class*="Header"],
+                [class*="banner"],[class*="Badge"],
+                [class*="stillWatching"],[class*="StillWatching"],
+                [class*="adOverlay"],[class*="AdOverlay"],
+                [class*="pauseScreen"],[class*="PauseScreen"],
+                [class*="endCard"],[class*="EndCard"],
+                [class*="spinner"],[class*="Spinner"],
+                [class*="loading"],[class*="Loading"],
+                [class*="consentBanner"],[class*="cookieBanner"],
+                [class*="ageGate"],[class*="AgeGate"]
+                { opacity:0!important; visibility:hidden!important; pointer-events:none!important; }
+                video { position:fixed!important; top:0!important; left:0!important;
+                        width:100vw!important; height:100vh!important; z-index:99999!important;
+                        object-fit:contain!important; background:#000!important; }
+                body  { background:#000!important; overflow:hidden!important; margin:0!important; }
+                html  { background:#000!important; }
+                *     { cursor:none!important; }
+            `;
             document.head.appendChild(s);
-            const v = document.querySelector('video');
-            if (v) {{ v.muted = false; v.volume = 1.0; if (v.paused) v.play().catch(()=>{{}}); }}
-        }}""")
+        }""")
     except Exception:
         pass
 
-    # CDP fullscreen
+    # ── Unmute and resume audio context ────────────────────────────────────
+    # Must be done via a simulated user gesture (page.evaluate fires in a
+    # user-gesture context in non-headless Chromium).
+    try:
+        page.evaluate("""() => {
+            // Resume any suspended AudioContext (autoplay policy)
+            if (window.AudioContext || window.webkitAudioContext) {
+                try {
+                    const ac = new (window.AudioContext || window.webkitAudioContext)();
+                    if (ac.state === 'suspended') ac.resume();
+                } catch(e) {}
+            }
+            const v = document.querySelector('video');
+            if (v) {
+                v.muted  = false;
+                v.volume = 1.0;
+                if (v.paused) v.play().catch(() => {});
+            }
+        }""")
+    except Exception:
+        pass
+
+    # ── CDP fullscreen: remove browser chrome so video fills entire Xvfb ───
     try:
         cdp = context.new_cdp_session(page)
         win = cdp.send("Browser.getWindowForTarget")
@@ -198,7 +497,11 @@ def main():
     except Exception:
         pass
 
-    # Wait for video to play
+    # Wait for video to play — 0.5 s polling, signal OK the moment video has
+    # a src and readyState >= 2 (enough data to start decoding).
+    # We do NOT wait for currentTime > 0 — that can take 5–10 s through ads.
+    # ffmpeg x11grab starts capturing immediately once we signal OK; any
+    # pre-roll that renders on screen is fine to capture.
     video_started = False
     deadline = time.monotonic() + startup_wait
     while time.monotonic() < deadline:
@@ -207,52 +510,84 @@ def main():
                 const v = document.querySelector('video');
                 if (!v) return {found: false};
                 if (v.muted) { v.muted = false; v.volume = 1.0; }
+                const buffered = v.buffered.length > 0 ? v.buffered.end(v.buffered.length-1) : 0;
                 return {found: true, readyState: v.readyState,
-                        currentTime: v.currentTime, paused: v.paused};
+                        currentTime: v.currentTime, paused: v.paused,
+                        hasSrc: !!(v.src || v.currentSrc), buffered: buffered};
             }""")
-            if r.get("found") and r.get("readyState", 0) >= 2:
-                if not r.get("paused", True) or r.get("currentTime", 0) > 0:
+            if r.get("found"):
+                rs  = r.get("readyState", 0)
+                buf = r.get("buffered", 0)
+                has_src = r.get("hasSrc", False)
+                # Signal ready as soon as the element has a source and can decode
+                if has_src and rs >= 2:
                     video_started = True
                     break
-            if r.get("paused"):
-                try:
-                    page.evaluate("() => { const v=document.querySelector('video'); if(v) v.play(); }")
-                except Exception:
-                    pass
+                # Also accept if already buffering even without readyState advancing
+                if buf > 0.5:
+                    video_started = True
+                    break
+            # Nudge: dismiss blocking dialogs and retry play()
+            try:
+                page.evaluate("""() => {
+                    for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                        const t = (btn.textContent||'').toLowerCase();
+                        if (['accept','agree','got it','ok','close','continue',
+                             'i agree','watch'].some(w=>t.includes(w))
+                            && btn.offsetParent !== null) { btn.click(); return; }
+                    }
+                    const v = document.querySelector('video');
+                    if (v && v.paused) v.play().catch(()=>{});
+                }""")
+            except Exception:
+                pass
         except Exception:
             pass
-        time.sleep(1)
+        time.sleep(0.5)
 
     result_pipe.write(f"OK video_started={video_started}\n")
     result_pipe.flush()
 
-    # Keepalive loop — select() with 30s timeout so we run keepalive every cycle
+    # Keepalive loop until STOP received.
+    # Uses select() with a 15 s timeout so the keepalive JS fires on every
+    # iteration regardless of whether the main process sends anything.
+    # (The old blocking readline() meant keepalive never ran, letting Pluto's
+    # "Still watching?" overlay pause the stream after ~60 s.)
+    import select as _select
     while True:
         try:
-            ready, _, _ = select.select([control_pipe], [], [], 30)
-            if ready:
+            r, _, _ = _select.select([control_pipe], [], [], 15.0)
+            if r:
                 line = control_pipe.readline()
                 if not line or line.strip() == "STOP":
                     break
         except Exception:
             break
+        # keepalive tick — runs every 15 s
         try:
-            page.evaluate(f"""() => {{
-                for (const btn of document.querySelectorAll('button')) {{
+            page.evaluate("""() => {
+                // Dismiss "Still Watching?" and similar overlays
+                for (const btn of document.querySelectorAll('button, [role="button"]')) {
                     const t = (btn.textContent||'').toLowerCase();
                     if (['still watching','continue','yes','keep watching',
-                         'resume','dismiss'].some(w=>t.includes(w)))
-                        {{ btn.click(); return; }}
-                }}
+                         'accept','agree','got it','ok','close',
+                         'confirm','i agree'].some(w=>t.includes(w))) {
+                        if (btn.offsetParent !== null) { btn.click(); return; }
+                    }
+                }
+                // Dismiss consent / age-gate dialogs
+                for (const sel of [
+                    '[class*="ageGate"] button', '[class*="AgeGate"] button',
+                    '[class*="consentBanner"] button', '[class*="cookieBanner"] button',
+                    '[id*="onetrust-accept"]', '[class*="acceptAll"]',
+                ]) {
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) { el.click(); return; }
+                }
+                // Keep video alive
                 const v = document.querySelector('video');
-                if (v) {{ v.muted=false; v.volume=1.0; if(v.paused||v.ended) v.play().catch(()=>{{}}); }}
-                if (!document.getElementById('pluto-x11-fs')) {{
-                    const s = document.createElement('style');
-                    s.id = 'pluto-x11-fs';
-                    s.textContent = `{FULLSCREEN_CSS}`;
-                    document.head.appendChild(s);
-                }}
-            }}""")
+                if (v) { v.muted=false; v.volume=1.0; if(v.paused||v.ended) v.play().catch(()=>{}); }
+            }""")
         except Exception:
             pass
 
@@ -328,8 +663,39 @@ def _detect_encoder() -> str:
         return _ENCODER_CACHE
 
 
+def _build_video_encoder_args(encoder: str) -> list[str]:
+    if encoder == "h264_nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p2", "-tune", "ll",
+                "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double(BITRATE),
+                "-g", str(FRAMERATE * 2), "-rc", "cbr"]
+    if encoder == "h264_vaapi":
+        return ["-c:v", "h264_vaapi",
+                "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double(BITRATE),
+                "-g", str(FRAMERATE * 2)]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+            "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double(BITRATE),
+            "-g", str(FRAMERATE * 2)]
+
+
+def _build_vf_chain(encoder: str) -> list[str]:
+    return ["-vf", "format=nv12,hwupload"] if encoder == "h264_vaapi" else []
+
+
+def _vaapi_device_args(encoder: str) -> list[str]:
+    return ["-vaapi_device", "/dev/dri/renderD128"] if encoder == "h264_vaapi" else []
+
+
+def _double(b: str) -> str:
+    try:
+        s = b[-1].lower()
+        if s in ("k", "m"):
+            return str(int(b[:-1]) * 2) + s
+    except (IndexError, ValueError):
+        pass
+    return b
+
 # ---------------------------------------------------------------------------
-# Cross-process display allocation
+# Cross-process display number allocation
 # ---------------------------------------------------------------------------
 
 _DISPLAY_LOCK_PATH  = "/tmp/pluto_x11_display.lock"
@@ -351,12 +717,12 @@ def _alloc_display() -> int:
         finally:
             fcntl.lockf(lf, fcntl.LOCK_UN)
 
-
 # ---------------------------------------------------------------------------
 # PulseAudio
 # ---------------------------------------------------------------------------
 
 def _start_pulseaudio(display_num: int) -> subprocess.Popen | None:
+    import shutil
     socket_dir  = f"/tmp/pulse-x11-{display_num}"
     pa_socket   = f"{socket_dir}/native"
     pa_conf     = f"{socket_dir}/pa.conf"
@@ -433,6 +799,62 @@ def _pulse_socket(display_num: int) -> str | None:
     p = f"/tmp/pulse-x11-{display_num}/native"
     return p if os.path.exists(p) else None
 
+# ---------------------------------------------------------------------------
+# Broadcast pipe
+# ---------------------------------------------------------------------------
+
+class _BroadcastPipe:
+    def __init__(self, pipe):
+        self._pipe    = pipe
+        self._readers: list[queue.Queue] = []
+        self._lock    = threading.Lock()
+        self._stopped = False
+        self._thread  = threading.Thread(target=self._pump, daemon=True,
+                                         name="pluto-x11-pump")
+        self._thread.start()
+
+    def add_reader(self) -> queue.Queue:
+        q: queue.Queue = queue.Queue(maxsize=MAX_QUEUE_DEPTH)
+        with self._lock:
+            self._readers.append(q)
+        return q
+
+    def remove_reader(self, q: queue.Queue) -> None:
+        with self._lock:
+            try:
+                self._readers.remove(q)
+            except ValueError:
+                pass
+
+    def _pump(self) -> None:
+        try:
+            while not self._stopped:
+                chunk = self._pipe.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                with self._lock:
+                    readers = list(self._readers)
+                for q in readers:
+                    try:
+                        q.put_nowait(chunk)
+                    except queue.Full:
+                        pass
+        except Exception as e:
+            logger.warning("[pluto-x11] pump: %s", e)
+        finally:
+            self._stopped = True
+            with self._lock:
+                for q in self._readers:
+                    try:
+                        q.put_nowait(None)
+                    except queue.Full:
+                        pass
+
+    def is_alive(self) -> bool:
+        return not self._stopped and self._thread.is_alive()
+
+    def stop(self) -> None:
+        self._stopped = True
 
 # ---------------------------------------------------------------------------
 # Session
@@ -444,21 +866,27 @@ class _X11Session:
     pluto_url:   str
     display_num: int
     encoder:     str
-    hls_dir:     str
 
-    xvfb_proc:   subprocess.Popen | None = field(default=None, repr=False)
-    pulse_proc:  subprocess.Popen | None = field(default=None, repr=False)
-    pw_proc:     subprocess.Popen | None = field(default=None, repr=False)
-    pw_ctrl_w:   object | None           = field(default=None, repr=False)
-    ffmpeg_proc: subprocess.Popen | None = field(default=None, repr=False)
+    xvfb_proc:    subprocess.Popen | None = field(default=None, repr=False)
+    pulse_proc:   subprocess.Popen | None = field(default=None, repr=False)
+    pw_proc:      subprocess.Popen | None = field(default=None, repr=False)
+    pw_ctrl_w:    object | None           = field(default=None, repr=False)
+    ffmpeg_proc:  subprocess.Popen | None = field(default=None, repr=False)
+    broadcast:    _BroadcastPipe   | None = field(default=None, repr=False)
 
-    clients:   int   = 0
-    last_access: float = field(default_factory=time.monotonic)
+    readers:   int   = 0
+    last_read: float = field(default_factory=time.monotonic)
     started:   bool  = False
+    lock:      threading.Lock = field(default_factory=threading.Lock)
 
+# ---------------------------------------------------------------------------
+# Session lifecycle
+# ---------------------------------------------------------------------------
 
-_sessions:     dict[str, _X11Session] = {}
-_sessions_lock = threading.Lock()
+_sessions:      dict[str, _X11Session] = {}
+_sessions_lock  = threading.Lock()
+# Per-channel launch lock: prevents duplicate sessions when two requests arrive
+# for the same channel while _launch_session is still blocking.
 _launch_locks:  dict[str, threading.Lock] = {}
 _launch_locks_lock = threading.Lock()
 
@@ -470,106 +898,15 @@ def _get_launch_lock(channel_id: str) -> threading.Lock:
         return _launch_locks[channel_id]
 
 
-# ---------------------------------------------------------------------------
-# ffmpeg HLS builder — mirrors philo stream.js _startPhiloFfmpegX11grab()
-# ---------------------------------------------------------------------------
-
-def _build_ffmpeg_cmd(display_num: int, pulse_socket: str | None,
-                      encoder: str, hls_dir: str) -> list[str]:
-    manifest = os.path.join(hls_dir, "index.m3u8")
-    seg_pat  = os.path.join(hls_dir, "seg%05d.ts")
-    display  = f":{display_num}"
-
-    if encoder == "h264_nvenc":
-        video_args = [
-            "-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-rc", "cbr",
-            "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "8M",
-            "-pix_fmt", "yuv420p", "-g", "30", "-keyint_min", "30",
-            "-zerolatency", "1", "-fps_mode", "cfr",
-        ]
-    elif encoder == "h264_vaapi":
-        video_args = [
-            "-c:v", "h264_vaapi",
-            "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "8M",
-            "-g", "30", "-fps_mode", "cfr",
-        ]
-    else:
-        video_args = [
-            "-c:v", "libx264", "-preset", "superfast", "-tune", "zerolatency",
-            "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", "8M",
-            "-pix_fmt", "yuv420p", "-g", "30", "-keyint_min", "30",
-            "-threads", "0", "-fps_mode", "cfr",
-            "-x264-params", "nal-hrd=cbr:force-cfr=1",
-        ]
-
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning"]
-
-    # Audio first (mirrors philo) — lets ffmpeg buffer frames before video
-    if pulse_socket:
-        cmd += [
-            "-thread_queue_size", "4096",
-            "-use_wallclock_as_timestamps", "1",
-            "-f", "pulse", "-sample_rate", "48000", "-channels", "2",
-            "-i", "out.monitor",
-        ]
-
-    # Video: x11grab
-    cmd += [
-        "-thread_queue_size", "4096",
-        "-use_wallclock_as_timestamps", "1",
-        "-f", "x11grab", "-video_size", f"{DISPLAY_W}x{DISPLAY_H}",
-        "-framerate", str(FRAMERATE), "-i", display,
-    ]
-
-    if encoder == "h264_vaapi":
-        cmd += ["-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload"]
-
-    cmd += video_args
-
-    if pulse_socket:
-        cmd += [
-            "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
-            "-af", "aresample=async=9600:min_hard_comp=0.1:first_pts=0",
-            "-map", "0:a", "-map", "1:v",
-        ]
-    else:
-        cmd += ["-an"]
-
-    cmd += [
-        "-fflags", "+genpts+discardcorrupt+igndts",
-        "-max_interleave_delta", "0",
-        "-f", "hls",
-        "-hls_time",             HLS_TIME,
-        "-hls_list_size",        HLS_LIST_SIZE,
-        "-hls_flags",            HLS_FLAGS,
-        "-hls_segment_filename", seg_pat,
-        manifest,
-    ]
-
-    return cmd
-
-
-# ---------------------------------------------------------------------------
-# Session launch / terminate
-# ---------------------------------------------------------------------------
-
-def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
+def _launch_session(channel_id: str, pluto_url: str,
+                   email: str | None = None, password: str | None = None) -> _X11Session:
     display_num = _alloc_display()
     encoder     = _detect_encoder()
 
-    hls_dir = os.path.join(tempfile.gettempdir(), f"pluto_{channel_id}")
-    os.makedirs(hls_dir, exist_ok=True)
-    # Clear stale segments from previous session
-    for f in os.listdir(hls_dir):
-        try:
-            os.unlink(os.path.join(hls_dir, f))
-        except Exception:
-            pass
-
     sess = _X11Session(channel_id=channel_id, pluto_url=pluto_url,
-                       display_num=display_num, encoder=encoder, hls_dir=hls_dir)
+                       display_num=display_num, encoder=encoder)
 
-    # ── 1. Xvfb — mirrors philo _ensureXvfb() with GLX+render flags ────────
+    # ── 1. Xvfb ────────────────────────────────────────────────────────────
     for _ in range(20):
         if not os.path.exists(f"/tmp/.X{display_num}-lock"):
             break
@@ -582,51 +919,60 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
     sess.xvfb_proc = subprocess.Popen(
         ["Xvfb", f":{display_num}",
          "-screen", "0", f"{DISPLAY_W}x{DISPLAY_H}x24",
-         "-ac", "+extension", "GLX", "+render", "-noreset"],
+         "-ac", "-nolisten", "tcp", "-nolisten", "unix"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    # Verify Xvfb is up (mirrors philo's xdpyinfo poll)
-    xvfb_env = {**os.environ, "DISPLAY": f":{display_num}"}
-    for _ in range(40):
-        time.sleep(0.25)
-        if sess.xvfb_proc.poll() is not None:
-            raise RuntimeError(f"Xvfb exited immediately on display :{display_num}")
-        try:
-            subprocess.check_call(
-                ["xdpyinfo", "-display", f":{display_num}"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                env=xvfb_env, timeout=0.5,
-            )
-            logger.debug("[pluto-x11] Xvfb ready :%d", display_num)
-            break
-        except Exception:
-            pass
-    else:
-        logger.warning("[pluto-x11] Xvfb :%d not confirmed — continuing", display_num)
+    time.sleep(0.4)
+    if sess.xvfb_proc.poll() is not None:
+        raise RuntimeError(f"Xvfb failed on display :{display_num}")
+
+    # Force US keyboard layout so Shift+1/2/3 maps to !/@/# correctly.
+    # Without this, special-char passwords get mistyped if the container's
+    # default XKBLAYOUT isn't 'us'.
+    try:
+        subprocess.run(
+            ["setxkbmap", "-display", f":{display_num}", "us"],
+            env={**os.environ, "DISPLAY": f":{display_num}"},
+            timeout=3, capture_output=True,
+        )
+    except Exception:
+        pass
 
     # ── 2. PulseAudio ──────────────────────────────────────────────────────
     sess.pulse_proc = _start_pulseaudio(display_num)
     ps = _pulse_socket(display_num)
 
-    # ── 3. Playwright worker subprocess (gevent-safe) ──────────────────────
+    # ── 3. Playwright worker (subprocess — immune to gevent patching) ───────
+    # Pipe pair: result (worker→parent) and control (parent→worker)
     result_r, result_w = os.pipe()
     ctrl_r,   ctrl_w   = os.pipe()
 
     pw_proc = subprocess.Popen(
-        [sys.executable, _PW_WORKER_PATH,
-         str(display_num), ps or "none", pluto_url,
-         str(result_w), str(ctrl_r),
-         str(DISPLAY_W), str(DISPLAY_H), str(STARTUP_WAIT)],
+        [
+            sys.executable, _PW_WORKER_PATH,
+            str(display_num),
+            ps or "none",
+            pluto_url,
+            str(result_w),   # fd: worker writes OK/ERR
+            str(ctrl_r),     # fd: worker reads STOP
+            str(DISPLAY_W), str(DISPLAY_H), str(STARTUP_WAIT),
+            email    or "none",
+            password or "none",
+            COOKIE_PATH,
+        ],
         pass_fds=(result_w, ctrl_r),
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
     os.close(result_w)
     os.close(ctrl_r)
+
     sess.pw_proc   = pw_proc
     sess.pw_ctrl_w = os.fdopen(ctrl_w, "w", buffering=1)
 
-    logger.info("[pluto-x11] waiting for Playwright worker (up to %ds)...", STARTUP_WAIT + 10)
+    # Wait for worker to signal ready (or fail)
     result_pipe = os.fdopen(result_r, "r")
+    logger.info("[pluto-x11] waiting for Playwright worker (up to %ds)...", STARTUP_WAIT + 10)
     line = result_pipe.readline()
     result_pipe.close()
 
@@ -639,99 +985,61 @@ def _launch_session(channel_id: str, pluto_url: str) -> _X11Session:
             pass
         raise RuntimeError(
             f"Playwright worker failed: {line.strip() or 'no output'}"
-            + (f" | {err_out[:300]}" if err_out else "")
+            + (f" | stderr: {err_out[:300]}" if err_out else "")
         )
+
     logger.info("[pluto-x11] Playwright worker ready: %s", line.strip())
 
-    # ── 4. ffmpeg → HLS segments on disk ───────────────────────────────────
-    ffmpeg_cmd = _build_ffmpeg_cmd(display_num, ps, encoder, hls_dir)
+    # ── 4. ffmpeg x11grab → MPEG-TS ────────────────────────────────────────
+    has_audio = ps is not None
+    ffmpeg_cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-f", "x11grab", "-framerate", str(FRAMERATE),
+        "-video_size", f"{DISPLAY_W}x{DISPLAY_H}",
+        "-i", f":{display_num}.0+0,0",
+    ]
+    ffmpeg_cmd += _vaapi_device_args(encoder)
+    if has_audio:
+        # Use the explicit monitor source name, not "default" — "default" maps
+        # to the sink input, not the monitor output, and often captures silence.
+        ffmpeg_cmd += ["-f", "pulse", "-ac", "2", "-ar", "48000", "-i", "out.monitor"]
+    ffmpeg_cmd += _build_vf_chain(encoder)
+    ffmpeg_cmd += _build_video_encoder_args(encoder)
+    ffmpeg_cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if has_audio else ["-an"]
+    ffmpeg_cmd += ["-f", "mpegts", "pipe:1"]
+
     ffmpeg_env = {**os.environ, "DISPLAY": f":{display_num}"}
-    if ps:
-        pulse_dir = os.path.dirname(ps)
-        ffmpeg_env.update({
-            "PULSE_SERVER":       f"unix:{ps}",
-            "PULSE_RUNTIME_PATH": pulse_dir,
-            "HOME":               pulse_dir,
-            "XDG_RUNTIME_DIR":    pulse_dir,
-            "PULSE_COOKIE":       os.path.join(pulse_dir, ".pulse-cookie"),
-        })
+    if has_audio:
+        ffmpeg_env["PULSE_SERVER"] = f"unix:{ps}"
 
     sess.ffmpeg_proc = subprocess.Popen(
-        ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=ffmpeg_env,
+        ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=ffmpeg_env,
     )
+    time.sleep(0.3)
+    if sess.ffmpeg_proc.poll() is not None:
+        err = sess.ffmpeg_proc.stderr.read().decode(errors="replace").strip()
+        raise RuntimeError(f"ffmpeg failed (encoder={encoder}): {err[:400]}")
 
-    # Log ffmpeg stderr in background
-    def _log_ffmpeg(proc, cid):
-        for line in proc.stderr:
-            l = line.decode(errors="replace").strip()
-            if l:
-                logger.info("[pluto-x11] ffmpeg ch=%s: %s", cid, l)
-    threading.Thread(target=_log_ffmpeg, args=(sess.ffmpeg_proc, channel_id),
-                     daemon=True).start()
+    sess.broadcast = _BroadcastPipe(sess.ffmpeg_proc.stdout)
+    sess.started   = True
 
-    # Start auto-recovery watcher
-    threading.Thread(target=_ffmpeg_watcher, args=(channel_id,),
-                     daemon=True, name=f"pluto-x11-watcher-{channel_id}").start()
-
-    sess.started = True
     logger.info(
         "[pluto-x11] session started ch=%s display=:%d encoder=%s "
-        "pid_xvfb=%d pid_pw=%d pid_ff=%d audio=%s hls=%s",
+        "pid_xvfb=%d pid_pw=%d pid_ff=%d audio=%s",
         channel_id, display_num, encoder,
         sess.xvfb_proc.pid, pw_proc.pid, sess.ffmpeg_proc.pid,
-        "on" if ps else "off", hls_dir,
+        "on" if has_audio else "off",
     )
     return sess
 
 
-def _ffmpeg_watcher(channel_id: str) -> None:
-    """Auto-restart ffmpeg if it dies while the session is still active."""
-    while True:
-        time.sleep(2)
-        with _sessions_lock:
-            sess = _sessions.get(channel_id)
-        if sess is None:
-            break
-        if sess.ffmpeg_proc and sess.ffmpeg_proc.poll() is not None:
-            idle = time.monotonic() - sess.last_access
-            if idle < IDLE_TIMEOUT:
-                logger.warning("[pluto-x11] ffmpeg died ch=%s — restarting", channel_id)
-                try:
-                    for f in os.listdir(sess.hls_dir):
-                        os.unlink(os.path.join(sess.hls_dir, f))
-                except Exception:
-                    pass
-                ps = _pulse_socket(sess.display_num)
-                ffmpeg_cmd = _build_ffmpeg_cmd(sess.display_num, ps, sess.encoder, sess.hls_dir)
-                ffmpeg_env = {**os.environ, "DISPLAY": f":{sess.display_num}"}
-                if ps:
-                    pulse_dir = os.path.dirname(ps)
-                    ffmpeg_env.update({
-                        "PULSE_SERVER": f"unix:{ps}",
-                        "PULSE_RUNTIME_PATH": pulse_dir,
-                        "HOME": pulse_dir,
-                        "XDG_RUNTIME_DIR": pulse_dir,
-                        "PULSE_COOKIE": os.path.join(pulse_dir, ".pulse-cookie"),
-                    })
-                sess.ffmpeg_proc = subprocess.Popen(
-                    ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                    env=ffmpeg_env,
-                )
-                threading.Thread(target=_log_ffmpeg_stderr,
-                                 args=(sess.ffmpeg_proc, channel_id), daemon=True).start()
-            else:
-                break
-
-
-def _log_ffmpeg_stderr(proc, cid):
-    for line in proc.stderr:
-        l = line.decode(errors="replace").strip()
-        if l:
-            logger.info("[pluto-x11] ffmpeg ch=%s: %s", cid, l)
-
-
 def _terminate_session(sess: _X11Session) -> None:
-    # Stop Playwright worker
+    import shutil
+
+    if sess.broadcast:
+        sess.broadcast.stop()
+
+    # Tell Playwright worker to exit cleanly
     if sess.pw_ctrl_w:
         try:
             sess.pw_ctrl_w.write("STOP\n")
@@ -755,12 +1063,12 @@ def _terminate_session(sess: _X11Session) -> None:
             except Exception:
                 pass
 
-    for d in (f"/tmp/pulse-x11-{sess.display_num}",):
+    for d in (f"/tmp/pulse-x11-{sess.display_num}",
+              f"/tmp/pluto-x11-profile-{sess.display_num}"):
         shutil.rmtree(d, ignore_errors=True)
 
     logger.info("[pluto-x11] session stopped ch=%s display=:%d",
                 sess.channel_id, sess.display_num)
-
 
 # ---------------------------------------------------------------------------
 # Reaper + startup cleanup
@@ -768,14 +1076,16 @@ def _terminate_session(sess: _X11Session) -> None:
 
 def _reaper() -> None:
     while True:
-        time.sleep(15)
+        time.sleep(5)
         to_evict: list[str] = []
         with _sessions_lock:
             for cid, sess in _sessions.items():
-                if sess.clients == 0 and time.monotonic() - sess.last_access > IDLE_TIMEOUT:
+                if sess.readers == 0 and time.monotonic() - sess.last_read > IDLE_TIMEOUT:
+                    to_evict.append(cid)
+                elif sess.broadcast and not sess.broadcast.is_alive():
+                    logger.warning("[pluto-x11] ffmpeg died ch=%s — evicting", cid)
                     to_evict.append(cid)
         for cid in to_evict:
-            logger.info("[pluto-x11] reaping idle session ch=%s", cid)
             with _sessions_lock:
                 sess = _sessions.pop(cid, None)
             if sess:
@@ -783,8 +1093,8 @@ def _reaper() -> None:
 
 
 def _cleanup_on_start() -> None:
-    import glob
-    for d in glob.glob("/tmp/pulse-x11-*"):
+    import glob, shutil
+    for d in glob.glob("/tmp/pulse-x11-*") + glob.glob("/tmp/pluto-x11-profile-*"):
         shutil.rmtree(d, ignore_errors=True)
     if not glob.glob("/tmp/.X*-lock"):
         try:
@@ -797,97 +1107,952 @@ _cleanup_on_start()
 threading.Thread(target=_reaper, daemon=True, name="pluto-x11-reaper").start()
 
 # ---------------------------------------------------------------------------
-# Public API — called from Flask routes
+# Headless login worker script — used by login_and_store_cookies()
 # ---------------------------------------------------------------------------
 
-def _has_segments(hls_dir: str) -> bool:
+_PW_LOGIN_WORKER_SCRIPT = r'''
+import os, sys, time, json, random
+
+# Selectors for Pluto's React sign-in form.
+# Ordered by specificity — most specific first so locator().first picks correctly.
+# DOM inspection shows:
+#   email:    <input placeholder="Enter your email" type="email" ...>
+#   password: <input name="password" type="password" placeholder="Please enter a password" id="password">
+_EMAIL_SEL = (
+    'input[placeholder="Enter your email"], '
+    'input[type="email"], '
+    'input[name="email"], '
+    'input[placeholder*="email" i], input[id*="email" i]'
+)
+_PW_SEL = (
+    'input[name="password"], '
+    'input[id="password"], '
+    'input[type="password"], '
+    'input[placeholder*="password" i]'
+)
+
+# Pluto's two-step login flow:
+#   Step 1: /us/account/check-email  (enter email, click Continue)
+#   Step 2: /us/account/check-password  (enter password, click Sign In)
+# The /sign-in URL just shows the homepage — avoid it as a starting point.
+_SIGN_IN_URLS = [
+    "https://pluto.tv/us/account/check-email",
+    "https://pluto.tv/account/check-email",
+    "https://pluto.tv/en/account/check-email",
+]
+
+# URL fragments that indicate we are on the password step.
+# Pluto's actual SPA flow: /us/account/check-email submits email, then the
+# password field appears on /us/account/sign-in (it's a client-side route
+# change — the URL stays at sign-in for the password step).
+# IMPORTANT: account/sign-in IS the password step URL, not a "still on login"
+# indicator.  left_signin must NOT treat it as a failure.
+_PASSWORD_URL_FRAGMENTS = ("account/sign-in", "check-password", "account/password")
+
+
+def _human_delay(lo=0.08, hi=0.18):
+    time.sleep(random.uniform(lo, hi))
+
+
+def _fill_react_input(page, selector, value):
+    """
+    Fill a React-controlled input by typing keystroke-by-keystroke with a
+    human-like random delay.  This is the only reliable method for React
+    controlled inputs — direct .value assignment bypasses onChange.
+
+    Iterates through comma-separated selectors and uses the first one that
+    is visible and enabled to avoid mis-targeting hidden inputs.
+    """
+    # Try each sub-selector independently so we pick the visible one
+    sub_selectors = [s.strip() for s in selector.split(",")]
+    target_loc = None
+    for sub in sub_selectors:
+        try:
+            loc = page.locator(sub).first
+            if loc.is_visible(timeout=1000) and loc.is_enabled(timeout=500):
+                target_loc = loc
+                break
+        except Exception:
+            continue
+
+    if target_loc is None:
+        # Fallback: use the full selector, take first
+        try:
+            target_loc = page.locator(selector).first
+        except Exception:
+            pass
+
+    if target_loc:
+        try:
+            target_loc.scroll_into_view_if_needed(timeout=3000)
+            target_loc.click(timeout=5000)
+            _human_delay(0.15, 0.3)
+            # Clear any pre-filled value
+            target_loc.press("Control+a")
+            _human_delay()
+            target_loc.press("Backspace")
+            _human_delay()
+            # keyboard.type() uses CDP insertText — fully layout-independent.
+            # Handles !@#$%^&*() without Shift key simulation, so the Xvfb
+            # keyboard layout cannot mangle special-char passwords.
+            page.keyboard.type(value, delay=random.randint(60, 120))
+            _human_delay(0.1, 0.2)
+            return True
+        except Exception:
+            pass
+
+    # Fallback: React native setter via JS (works when locator interaction fails)
     try:
-        manifest = os.path.join(hls_dir, "index.m3u8")
-        return (os.path.exists(manifest) and
-                any(f.endswith(".ts") for f in os.listdir(hls_dir)))
+        first_sub = sub_selectors[0]
+        page.evaluate("""([sel, val]) => {
+            const inp = document.querySelector(sel);
+            if (!inp) return false;
+            inp.focus();
+            const setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value').set;
+            setter.call(inp, val);
+            inp.dispatchEvent(new Event('input',  {bubbles: true}));
+            inp.dispatchEvent(new Event('change', {bubbles: true}));
+            inp.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true}));
+            return true;
+        }""", [first_sub, value])
+        return True
     except Exception:
         return False
 
 
-def get_or_create_session(channel_id: str, pluto_url: str) -> _X11Session:
+def _click_button(page, labels):
+    """Click the first visible button whose text matches one of the labels."""
+    try:
+        page.evaluate("""(labels) => {
+            for (const btn of document.querySelectorAll('button, [role="button"]')) {
+                const t = (btn.textContent || '').trim().toLowerCase();
+                if (labels.some(l => t === l || t.includes(l))) {
+                    if (btn.offsetParent !== null) { btn.click(); return true; }
+                }
+            }
+            return false;
+        }""", [l.lower() for l in labels])
+    except Exception:
+        pass
+
+
+def _verify_field_value(page, selector, expected):
     """
-    Return existing healthy session or launch a new one.
-    Blocks until the session is launched (but not until HLS segments exist —
-    the route does that wait so it can stream the response immediately).
+    Return True if the input currently holds the expected value.
+    NOTE: Playwright always returns '' for input[type="password"] (security
+    restriction) — always return True for password fields to avoid a spurious
+    double-fill that would corrupt the password.
     """
+    # If selector targets a password field, skip verification
+    if 'password' in selector.lower() or 'type="password"' in selector.lower():
+        return True
+    try:
+        actual = page.locator(selector).first.input_value(timeout=3000)
+        return actual == expected
+    except Exception:
+        return False
+
+
+def main():
+    pluto_email    = sys.argv[1]
+    pluto_password = sys.argv[2]
+    cookie_path    = sys.argv[3]
+    result_fd      = int(sys.argv[4])
+
+    result_pipe = os.fdopen(result_fd, "w", buffering=1)
+
+    def fail(msg):
+        result_pipe.write(f"ERR {msg}\n")
+        result_pipe.flush()
+
+    def ok(msg=""):
+        result_pipe.write(f"OK {msg}\n")
+        result_pipe.flush()
+
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    except ImportError as e:
+        fail(f"playwright not installed: {e}")
+        return
+
+    # ── Spin up a temporary Xvfb display ───────────────────────────────────
+    # Running Chromium non-headless on a virtual framebuffer is the only
+    # reliable way to bypass Pluto's bot-detection.  Headless Chromium leaks
+    # fingerprints that Pluto uses to return a fake "Email or password is not
+    # correct" error even when credentials are correct.
+    import subprocess as _sp
+
+    login_display = None
+    xvfb_proc     = None
+    for _dn in range(100, 120):
+        if not os.path.exists(f"/tmp/.X{_dn}-lock"):
+            login_display = _dn
+            break
+    if login_display is None:
+        fail("no free Xvfb display for login")
+        return
+
+    try:
+        xvfb_proc = _sp.Popen(
+            ["Xvfb", f":{login_display}", "-screen", "0", "1280x800x24",
+             "-ac", "-nolisten", "tcp"],
+            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+        )
+        time.sleep(1.0)
+        if xvfb_proc.poll() is not None:
+            fail(f"Xvfb failed on display :{login_display}")
+            return
+        # Force US keyboard layout so !/@/# type correctly via Shift+1/2/3
+        try:
+            _sp.run(
+                ["setxkbmap", "-display", f":{login_display}", "us"],
+                env={**os.environ, "DISPLAY": f":{login_display}"},
+                timeout=3, capture_output=True,
+            )
+        except Exception:
+            pass
+    except FileNotFoundError:
+        fail("Xvfb not found — cannot run non-headless login")
+        return
+    except Exception as e:
+        fail(f"Xvfb launch error: {e}")
+        return
+
+    pw_env = dict(os.environ)
+    pw_env["DISPLAY"] = f":{login_display}"
+
+    pw_args = [
+        "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+        "--no-first-run", "--no-default-browser-check",
+        "--disable-blink-features=AutomationControlled",
+        "--autoplay-policy=no-user-gesture-required",
+        "--lang=en-US,en",
+        "--window-size=1280,800", "--window-position=0,0",
+        "--disable-infobars", "--disable-notifications",
+    ]
+
+    try:
+        pw      = sync_playwright().start()
+        browser = pw.chromium.launch(headless=False, env=pw_env, args=pw_args)
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1280, "height": 800},
+            locale="en-US",
+            timezone_id="America/Chicago",
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+        )
+        # ── Stealth: mask Playwright/automation fingerprints ────────────────
+        # Pluto uses Akamai bot-detection that checks navigator.webdriver,
+        # chrome.runtime, and other Playwright leaks even in non-headless mode.
+        # add_init_script runs before any page JS so patches land first.
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            if (!window.chrome) {
+                window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}};
+            }
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+        """)
+        page = context.new_page()
+    except Exception as e:
+        try:
+            xvfb_proc.kill()
+        except Exception:
+            pass
+        fail(f"launch failed: {e}")
+        return
+
+    try:
+        # ── Step 1: Find the email form ─────────────────────────────────────
+        # IMPORTANT: Navigate via the homepage first so Pluto assigns its
+        # msockid / ptv-client-id session tokens naturally through its own
+        # redirect chain before we touch any auth endpoint.
+        # Going directly to /check-email skips this and causes Pluto to
+        # fingerprint the session as a bot and return "Email or password is
+        # not correct" even when credentials are valid.
+        email_form_found = False
+        try:
+            # Step 1a: warm up session cookies on the homepage
+            page.goto("https://pluto.tv/us/live-tv", wait_until="domcontentloaded", timeout=20000)
+            _human_delay(2.5, 4.0)
+            # Scroll slightly to simulate human interaction
+            try:
+                page.evaluate("() => window.scrollBy(0, Math.random()*200+50)")
+            except Exception:
+                pass
+            _human_delay(0.5, 1.0)
+            # Click the "Sign In" button/link in the nav
+            page.evaluate("""() => {
+                for (const el of document.querySelectorAll('a, button, [role="button"]')) {
+                    const t = (el.textContent || '').trim().toLowerCase();
+                    const h = (el.href || '');
+                    if (t === 'sign in' || t === 'log in' ||
+                        h.includes('check-email') || h.includes('sign-in')) {
+                        el.click(); return;
+                    }
+                }
+            }""")
+            _human_delay(1.0, 1.8)
+            # ── Dismiss "Continue / Limit features" upsell modal ───────────
+            # This modal appears between the nav Sign In click and the email
+            # form.  Must click "Continue" (not "Limit features") to reach login.
+            _upsell_t = time.monotonic() + 5
+            while time.monotonic() < _upsell_t:
+                try:
+                    _got_it = page.evaluate("""() => {
+                        for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                            const t = (btn.textContent || '').trim().toLowerCase();
+                            if (t === 'continue' && btn.offsetParent !== null) {
+                                btn.click(); return true;
+                            }
+                        }
+                        return false;
+                    }""")
+                    if _got_it:
+                        _human_delay(0.8, 1.2)
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.3)
+            _human_delay(0.5, 1.0)
+            page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=12000)
+            email_form_found = True
+        except Exception:
+            pass
+
+        # Fallback: go directly to check-email
+        if not email_form_found:
+            for url in _SIGN_IN_URLS:
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                except Exception:
+                    continue
+                _human_delay(0.8, 1.5)
+                # Dismiss Continue modal if it appears on direct navigation too
+                try:
+                    page.evaluate("""() => {
+                        for (const btn of document.querySelectorAll('button,[role="button"]')) {
+                            const t = (btn.textContent || '').trim().toLowerCase();
+                            if (t === 'continue' && btn.offsetParent !== null) { btn.click(); return; }
+                        }
+                    }""")
+                    _human_delay(0.5, 0.8)
+                except Exception:
+                    pass
+                try:
+                    page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=10000)
+                    email_form_found = True
+                    break
+                except PWTimeout:
+                    continue
+
+        if not email_form_found:
+            # Last resort: click Sign In from the homepage
+            try:
+                page.goto("https://pluto.tv/", wait_until="domcontentloaded", timeout=20000)
+                _human_delay(2.0, 3.0)
+                page.evaluate("""() => {
+                    for (const a of document.querySelectorAll('a')) {
+                        const h = (a.href || '');
+                        const t = (a.textContent || '').trim().toLowerCase();
+                        if (h.includes('check-email') || h.includes('sign-in') ||
+                            t === 'sign in' || t === 'log in') {
+                            a.click(); return;
+                        }
+                    }
+                }""")
+                page.wait_for_selector(_EMAIL_SEL, state="visible", timeout=12000)
+                email_form_found = True
+            except Exception:
+                pass
+
+        if not email_form_found:
+            inputs_found = ""
+            body_snippet = ""
+            try:
+                inputs_found = page.evaluate("""() =>
+                    [...document.querySelectorAll('input')].map(i =>
+                        `${i.type}|${i.name}|${i.placeholder}|${i.id}`).join('; ')
+                """)
+                body_snippet = page.evaluate("() => document.body.innerText.slice(0, 300)")
+            except Exception:
+                pass
+            fail(
+                f"email form not found — "
+                f"last_url={page.url} inputs=[{inputs_found}] body=[{body_snippet}]"
+            )
+            return
+
+        # ── Step 2: Fill email ──────────────────────────────────────────────
+        if not _fill_react_input(page, _EMAIL_SEL, pluto_email):
+            fail("could not fill email field")
+            return
+
+        # Verify value actually landed in the field
+        if not _verify_field_value(page, _EMAIL_SEL, pluto_email):
+            # Try once more with a longer delay
+            _human_delay(0.5, 1.0)
+            _fill_react_input(page, _EMAIL_SEL, pluto_email)
+
+        _human_delay(0.4, 0.8)
+
+        # ── Step 3: Submit email, wait for password page ────────────────────
+        # Button on Pluto's email page text is exactly "Next"
+        _next_clicked = False
+        try:
+            page.get_by_role("button", name="Next").click(timeout=4000)
+            _next_clicked = True
+        except Exception:
+            pass
+        if not _next_clicked:
+            _click_button(page, ["next"])
+            _human_delay(0.3, 0.6)
+        if not _next_clicked:
+            try:
+                page.locator(_EMAIL_SEL).first.press("Enter")
+            except Exception:
+                pass
+
+        # Wait for the URL to change to the password step
+        # (more reliable than a fixed sleep)
+        pw_page_reached = False
+        pw_wait_deadline = time.monotonic() + 15
+        while time.monotonic() < pw_wait_deadline:
+            try:
+                cur = page.url
+                if any(f in cur for f in _PASSWORD_URL_FRAGMENTS):
+                    # Also confirm the password input is rendered
+                    try:
+                        page.wait_for_selector(_PW_SEL, state="visible", timeout=5000)
+                        pw_page_reached = True
+                        break
+                    except PWTimeout:
+                        pass
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        if not pw_page_reached:
+            # Maybe the form is single-step (both fields visible together)
+            try:
+                page.wait_for_selector(_PW_SEL, state="visible", timeout=5000)
+                pw_page_reached = True
+            except PWTimeout:
+                pass
+
+        if not pw_page_reached:
+            cur_url = ""
+            try:
+                cur_url = page.url
+            except Exception:
+                pass
+            fail(f"password page not reached — url={cur_url}")
+            return
+
+        _human_delay(0.6, 1.2)
+
+        # ── Step 4: Fill password ───────────────────────────────────────────
+        # Pluto's password field: placeholder="Please enter a password"
+        if not _fill_react_input(page, _PW_SEL, pluto_password):
+            fail("could not fill password field")
+            return
+
+        # Verify the password field value
+        if not _verify_field_value(page, _PW_SEL, pluto_password):
+            _human_delay(0.5, 1.0)
+            _fill_react_input(page, _PW_SEL, pluto_password)
+
+        _human_delay(0.5, 1.0)
+
+        # ── Step 5: Submit — button text on password page is "Sign In" ──────
+        # Use get_by_role first (most reliable), fall back to JS click / Enter
+        submit_clicked = False
+        try:
+            page.get_by_role("button", name="Sign In").click(timeout=5000)
+            submit_clicked = True
+        except Exception:
+            pass
+        if not submit_clicked:
+            _click_button(page, ["sign in", "log in", "login", "signin", "submit"])
+            _human_delay(0.3, 0.6)
+            try:
+                page.locator(_PW_SEL).first.press("Enter")
+            except Exception:
+                pass
+
+        # ── Step 6: Confirm login succeeded ────────────────────────────────
+        # Pluto's SPA flow after Sign In click:
+        #   /account/sign-in  →  (brief pause)  →  /us/live-tv  (or similar)
+        # We detect success by: URL leaves all /account/* pages OR a known
+        # auth cookie appears.  Do NOT fail if still on /account/sign-in
+        # immediately after submit — that's the password step URL itself.
+        logged_in = False
+        auth_names = {
+            "plutotv-userToken", "userToken", "authToken", "token",
+            "__session", "pluto-session", "plutotv-session",
+            "jwt", "access_token",
+        }
+        # All URL patterns that represent still-being-on-login-flow
+        _LOGIN_URL_PARTS = (
+            "check-email", "check-password", "account/password", "account/sign-in"
+        )
+        verify_deadline = time.monotonic() + 30
+        while time.monotonic() < verify_deadline:
+            time.sleep(1)
+            try:
+                current_url = page.url
+                cookies = context.cookies()
+                cookie_names = {c["name"] for c in cookies}
+
+                # Auth cookie present → success
+                if cookie_names & auth_names:
+                    logged_in = True
+                    break
+
+                # URL moved fully away from login flow → success
+                left_signin = not any(x in current_url for x in _LOGIN_URL_PARTS)
+                if left_signin and current_url not in ("about:blank", ""):
+                    time.sleep(1.5)
+                    cookies = context.cookies()
+                    cookie_names = {c["name"] for c in cookies}
+                    if cookie_names & auth_names or len(cookies) > 5:
+                        logged_in = True
+                        break
+
+                # If we're still on sign-in page after 20s, check for error text
+                # and bail early rather than waiting the full 30s
+                if time.monotonic() > verify_deadline - 10:
+                    err_check = ""
+                    try:
+                        err_check = page.evaluate("""() => {
+                            for (const sel of ['[class*="error" i]','[role="alert"]',
+                                               '[data-testid*="error" i]']) {
+                                const el = document.querySelector(sel);
+                                if (el && el.innerText.trim()) return el.innerText.trim();
+                            }
+                            return '';
+                        }""")
+                    except Exception:
+                        pass
+                    if err_check:
+                        break  # definitive error — stop waiting
+
+            except Exception:
+                pass
+
+        if not logged_in:
+            error_text = ""
+            try:
+                error_text = page.evaluate("""() => {
+                    for (const sel of [
+                        '[class*="error" i]', '[role="alert"]',
+                        '[data-testid*="error" i]', '[class*="Error"]',
+                        'p[class*="message" i]',
+                    ]) {
+                        const el = document.querySelector(sel);
+                        if (el && el.innerText.trim()) return el.innerText.trim().slice(0, 200);
+                    }
+                    return '';
+                }""")
+            except Exception:
+                pass
+            cookie_names_str = ""
+            try:
+                cookie_names_str = ", ".join(c["name"] for c in context.cookies())
+            except Exception:
+                pass
+            fail(
+                f"login verification failed — page={page.url}"
+                + (f" form_error={error_text!r}" if error_text else "")
+                + (f" cookies=[{cookie_names_str}]" if cookie_names_str else "")
+            )
+            return
+
+        # ── Persist cookies ─────────────────────────────────────────────────
+        try:
+            cookies = context.cookies()
+            with open(cookie_path, "w") as f:
+                json.dump(cookies, f)
+        except Exception as e:
+            fail(f"cookie save failed: {e}")
+            return
+
+        ok(f"cookies={len(cookies)}")
+
+    except Exception as e:
+        fail(f"unexpected error: {e}")
+    finally:
+        try:
+            page.close(); context.close(); browser.close(); pw.stop()
+        except Exception:
+            pass
+        try:
+            if xvfb_proc is not None:
+                xvfb_proc.kill()
+                xvfb_proc.wait(timeout=5)
+        except Exception:
+            pass
+
+if __name__ == "__main__":
+    main()
+'''
+
+_PW_LOGIN_WORKER_PATH = "/tmp/pluto_pw_login_worker.py"
+with open(_PW_LOGIN_WORKER_PATH, "w") as _lf:
+    _lf.write(_PW_LOGIN_WORKER_SCRIPT)
+
+
+# ---------------------------------------------------------------------------
+# Pluto TV REST API login (no browser — bypasses Akamai bot detection)
+# ---------------------------------------------------------------------------
+
+def _get_or_create_client_id() -> str:
+    """Return a persistent client UUID, creating one on first use."""
+    try:
+        if os.path.exists(_CLIENT_ID_PATH):
+            cid = open(_CLIENT_ID_PATH).read().strip()
+            if cid:
+                return cid
+    except Exception:
+        pass
+    cid = str(uuid.uuid4())
+    try:
+        open(_CLIENT_ID_PATH, "w").write(cid)
+    except Exception:
+        pass
+    return cid
+
+
+def _pluto_boot() -> tuple[str, object]:
+    """
+    GET boot.pluto.tv/v4/start → anonymous session JWT.
+    Returns (session_token, requests.Session).
+    Raises RuntimeError on failure.
+    """
+    try:
+        import requests as _req
+    except ImportError:
+        raise RuntimeError("requests library not installed; run: pip install requests")
+
+    client_id = _get_or_create_client_id()
+    session = _req.Session()
+    session.headers.update(_PLUTO_BASE_HEADERS)
+
+    params = {
+        "appName":           "web",
+        "appVersion":        _PLUTO_APP_VERSION,
+        "deviceVersion":     _PLUTO_DEVICE_VERSION,
+        "deviceMake":        "edge-chromium",
+        "deviceModel":       "web",
+        "deviceType":        "web",
+        "clientID":          client_id,
+        "clientModelNumber": "1.0",
+        "serverSideAds":     "false",
+        "constraints":       "",
+        "drmCapabilities":   "widevine:L3",
+        "clientTime":        str(int(time.time() * 1000)),
+    }
+    try:
+        resp = session.get("https://boot.pluto.tv/v4/start",
+                           params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        raise RuntimeError(f"boot request failed: {exc}") from exc
+
+    token = (data.get("sessionToken")
+             or data.get("authorizationToken")
+             or (data.get("sessionInformation") or {}).get("sessionToken"))
+    if not token:
+        raise RuntimeError(f"boot: no sessionToken in response keys={list(data.keys())}")
+
+    return token, session
+
+
+def _pluto_api_login(email: str, password: str, cookie_path: str) -> dict:
+    """
+    Authenticate with Pluto TV's REST API directly — no browser, no Akamai.
+
+    Flow:
+      1. GET  boot.pluto.tv/v4/start              → anonymous boot JWT
+      2. POST service-users.clusters.pluto.tv/v4/auth?sync=true
+             Authorization: Bearer <boot_jwt>
+             Body: {"userIdentity": email, "password": password}
+         → authenticated JWT with userID populated
+
+    Saves result to cookie_path in Playwright cookie format, including a
+    synthetic "_pluto_x11_authtoken" entry the streaming worker uses for
+    localStorage injection and API request interception.
+
+    Returns {"ok": True, "cookies": N} or {"ok": False, "error": "..."}.
+    """
+    try:
+        boot_token, session = _pluto_boot()
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    auth_headers = {
+        **_PLUTO_BASE_HEADERS,
+        "Authorization":  f"Bearer {boot_token}",
+        "Content-Type":   "application/json; charset=utf8",
+    }
+    try:
+        resp = session.post(
+            "https://service-users.clusters.pluto.tv/v4/auth",
+            params={"sync": "true"},
+            headers=auth_headers,
+            json={"userIdentity": email, "password": password},
+            timeout=15,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"auth request failed: {exc}"}
+
+    if resp.status_code == 401:
+        return {"ok": False, "error": "invalid credentials (401)"}
+    if resp.status_code == 403:
+        return {"ok": False, "error": "account locked or region-blocked (403)"}
+    if not resp.ok:
+        return {"ok": False, "error": f"auth failed: HTTP {resp.status_code}"}
+
+    try:
+        data = resp.json()
+    except Exception as exc:
+        return {"ok": False, "error": f"auth response not JSON: {exc}"}
+
+    auth_token = (data.get("sessionToken")
+                  or data.get("authorizationToken")
+                  or data.get("token"))
+    if not auth_token:
+        return {"ok": False, "error": f"auth: no token in response keys={list(data.keys())}"}
+
+    # Build Playwright-format cookie list from the requests session cookies
+    # plus the synthetic auth-token entry the streaming worker reads.
+    pw_cookies: list[dict] = []
+    for c in session.cookies:
+        pw_cookies.append({
+            "name":     c.name,
+            "value":    c.value,
+            "domain":   c.domain or ".pluto.tv",
+            "path":     c.path or "/",
+            "expires":  int(c.expires) if c.expires else -1,
+            "httpOnly": bool(c._rest.get("HttpOnly", False)),
+            "secure":   bool(c.secure),
+            "sameSite": "None",
+        })
+
+    # Synthetic entry: the streaming worker extracts this to inject the JWT
+    # into localStorage and API request headers without another login round-trip.
+    pw_cookies.append({
+        "name":     "_pluto_x11_authtoken",
+        "value":    auth_token,
+        "domain":   ".pluto.tv",
+        "path":     "/",
+        "expires":  -1,
+        "httpOnly": False,
+        "secure":   True,
+        "sameSite": "None",
+    })
+
+    try:
+        os.makedirs(os.path.dirname(cookie_path) or ".", exist_ok=True)
+        with open(cookie_path, "w") as _f:
+            _json_mod.dump(pw_cookies, _f)
+    except Exception as exc:
+        return {"ok": False, "error": f"cookie save failed: {exc}"}
+
+    logger.info("[pluto-x11] API login OK — %d cookies + auth token saved to %s",
+                len(pw_cookies), cookie_path)
+    return {"ok": True, "cookies": len(pw_cookies)}
+
+
+# ---------------------------------------------------------------------------
+# Public API — settings / login helpers
+# ---------------------------------------------------------------------------
+
+def login_and_store_cookies(email: str, password: str,
+                            cookie_path: str | None = None) -> dict:
+    """
+    Authenticate with Pluto TV and persist credentials to *cookie_path*.
+
+    Tries the direct REST API first (fast, ~1 s, no bot detection risk).
+    Falls back to the headless Playwright worker only if the API path fails.
+
+    Returns ``{"ok": True, "cookies": N}`` on success, or
+    ``{"ok": False, "error": "..."}`` on failure.
+    """
+    cookie_path = cookie_path or COOKIE_PATH
+
+    # ── Fast path: direct REST API (no browser, no Akamai) ─────────────────
+    result = _pluto_api_login(email, password, cookie_path)
+    if result["ok"]:
+        return result
+
+    api_err = result.get("error", "unknown")
+    logger.warning("[pluto-x11] API login failed (%s) — falling back to Playwright", api_err)
+
+    # ── Fallback: headless Playwright worker ────────────────────────────────
+    result_r, result_w = os.pipe()
+    proc = subprocess.Popen(
+        [
+            sys.executable, _PW_LOGIN_WORKER_PATH,
+            email, password, cookie_path, str(result_w),
+        ],
+        pass_fds=(result_w,),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    os.close(result_w)
+
+    result_pipe = os.fdopen(result_r, "r")
+    line = result_pipe.readline()
+    result_pipe.close()
+
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+    if line.startswith("OK"):
+        detail = line[2:].strip()
+        n = 0
+        for part in detail.split():
+            if part.startswith("cookies="):
+                try:
+                    n = int(part.split("=", 1)[1])
+                except ValueError:
+                    pass
+        logger.info("[pluto-x11] Playwright login OK — %d cookies stored", n)
+        return {"ok": True, "cookies": n}
+    else:
+        err = line.strip()
+        if not err:
+            stderr_out = ""
+            try:
+                stderr_out = proc.stderr.read().decode(errors="replace").strip()[:300]
+            except Exception:
+                pass
+            err = "no output from worker" + (f" | stderr: {stderr_out}" if stderr_out else "")
+        logger.error("[pluto-x11] login failed (API: %s) (Playwright: %s)", api_err, err)
+        return {"ok": False, "error": f"API: {api_err} | Playwright: {err}"}
+
+
+def verify_login(cookie_path: str | None = None) -> dict:
+    """
+    Check whether stored cookies appear valid (file exists, not empty,
+    contains at least one recognisable Pluto auth cookie that has not
+    expired).
+
+    Returns ``{"ok": True, "cookies": N}`` or ``{"ok": False, "reason": "..."}``.
+    """
+    import json as _json
+    import time as _time
+
+    cookie_path = cookie_path or COOKIE_PATH
+    if not os.path.exists(cookie_path):
+        return {"ok": False, "reason": "no cookie file"}
+    try:
+        with open(cookie_path) as f:
+            cookies: list[dict] = _json.load(f)
+    except Exception as e:
+        return {"ok": False, "reason": f"cookie file unreadable: {e}"}
+
+    if not cookies:
+        return {"ok": False, "reason": "cookie file is empty"}
+
+    now = _time.time()
+    # _pluto_x11_authtoken is the synthetic entry written by _pluto_api_login().
+    # It is always valid as long as it exists (Pluto JWTs last ~24 h).
+    auth_names = {"plutotv-userToken", "__session", "pluto-session",
+                  "userToken", "authToken", "token", "_pluto_x11_authtoken"}
+    found_auth = False
+    for c in cookies:
+        if c.get("name") in auth_names:
+            expires = c.get("expires", -1)
+            if expires > 0 and expires < now:
+                return {"ok": False, "reason": f"auth cookie '{c['name']}' has expired"}
+            found_auth = True
+
+    if not found_auth:
+        # Cookies present but no recognised auth token — warn but don't block
+        logger.warning("[pluto-x11] verify_login: no known auth cookie names found; "
+                       "assuming valid (%d cookies)", len(cookies))
+
+    # Report real cookie count excluding the synthetic token entry
+    real_n = sum(1 for c in cookies if c.get("name") != "_pluto_x11_authtoken")
+    return {"ok": True, "cookies": real_n}
+
+
+def clear_cookies(cookie_path: str | None = None) -> None:
+    """Delete the stored cookie file (e.g. on logout / credential change)."""
+    cookie_path = cookie_path or COOKIE_PATH
+    try:
+        os.remove(cookie_path)
+        logger.info("[pluto-x11] cookies cleared: %s", cookie_path)
+    except FileNotFoundError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def stream_channel(channel_id: str, pluto_url: str,
+                   email: str | None = None, password: str | None = None) -> Iterator[bytes]:
+    """
+    Stream multiplexer — unlimited sessions.
+
+    - Same channel already streaming → attach as a reader to the existing
+      session (one Xvfb+Chromium+ffmpeg shared among all viewers).
+    - New channel → spin up a new session.
+    - Sessions are torn down by the reaper after IDLE_TIMEOUT seconds with
+      no active readers.
+    """
+    if not ENABLED:
+        logger.error("[pluto-x11] disabled")
+        return
+
     launch_lock = _get_launch_lock(channel_id)
     with launch_lock:
         with _sessions_lock:
             sess = _sessions.get(channel_id)
-            if sess is not None and sess.started:
-                sess.clients += 1
-                sess.last_access = time.monotonic()
-                return sess
-            if sess is not None:
-                _terminate_session(sess)
-                del _sessions[channel_id]
+            if sess is not None and sess.broadcast and sess.broadcast.is_alive():
+                sess.readers += 1
+            else:
+                if sess is not None:
+                    _terminate_session(sess)
+                    del _sessions[channel_id]
+                sess = None
 
-        new_sess = _launch_session(channel_id, pluto_url)
-        with _sessions_lock:
-            _sessions[channel_id] = new_sess
-            new_sess.clients += 1
-        return new_sess
+        if sess is None:
+            new_sess = _launch_session(channel_id, pluto_url, email=email, password=password)
+            with _sessions_lock:
+                _sessions[channel_id] = new_sess
+                new_sess.readers += 1
+            sess = new_sess
 
-
-def release_client(channel_id: str) -> None:
-    with _sessions_lock:
-        sess = _sessions.get(channel_id)
-        if sess:
-            sess.clients = max(0, sess.clients - 1)
-            sess.last_access = time.monotonic()
-
-
-def get_hls_manifest(channel_id: str, base_url: str) -> str | None:
-    """Read index.m3u8 and rewrite segment URLs to point at our serve endpoint."""
-    with _sessions_lock:
-        sess = _sessions.get(channel_id)
-    if not sess:
-        return None
-    manifest_path = os.path.join(sess.hls_dir, "index.m3u8")
+    reader_q = sess.broadcast.add_reader()
     try:
-        text = open(manifest_path).read()
-    except FileNotFoundError:
-        return None
-    lines = []
-    for line in text.splitlines():
-        t = line.strip()
-        if t and not t.startswith("#"):
-            lines.append(base_url + os.path.basename(t))
-        else:
-            lines.append(line)
-    return "\n".join(lines)
-
-
-def get_segment_path(channel_id: str, segment: str) -> str | None:
-    with _sessions_lock:
-        sess = _sessions.get(channel_id)
-    if not sess:
-        return None
-    p = os.path.join(sess.hls_dir, os.path.basename(segment))
-    return p if os.path.exists(p) else None
-
-
-def wait_for_segments(channel_id: str, timeout: float = 60.0) -> bool:
-    """Block until HLS segments appear or timeout. Returns True if ready."""
-    with _sessions_lock:
-        sess = _sessions.get(channel_id)
-    if not sess:
-        return False
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _has_segments(sess.hls_dir):
-            return True
-        time.sleep(0.5)
-        # keep last_access alive so reaper doesn't kill it
+        while True:
+            try:
+                chunk = reader_q.get(timeout=10)
+            except queue.Empty:
+                continue
+            if chunk is None:
+                break
+            sess.last_read = time.monotonic()
+            yield chunk
+    finally:
+        sess.broadcast.remove_reader(reader_q)
         with _sessions_lock:
-            if channel_id in _sessions:
-                _sessions[channel_id].last_access = time.monotonic()
-    return False
+            sess.readers = max(0, sess.readers - 1)
+            sess.last_read = time.monotonic()
 
 
 def active_sessions() -> list[dict]:
@@ -895,20 +2060,11 @@ def active_sessions() -> list[dict]:
     with _sessions_lock:
         for cid, sess in _sessions.items():
             out.append({
-                "channel_id": cid,
-                "display":    f":{sess.display_num}",
-                "encoder":    sess.encoder,
-                "clients":    sess.clients,
-                "idle_secs":  round(time.monotonic() - sess.last_access, 1),
-                "hls_dir":    sess.hls_dir,
-                "segments":   len([f for f in os.listdir(sess.hls_dir) if f.endswith(".ts")])
-                              if os.path.exists(sess.hls_dir) else 0,
+                "channel_id":   cid,
+                "display":      f":{sess.display_num}",
+                "encoder":      sess.encoder,
+                "readers":      sess.readers,
+                "idle_secs":    round(time.monotonic() - sess.last_read, 1),
+                "ffmpeg_alive": sess.broadcast.is_alive() if sess.broadcast else False,
             })
     return out
-
-
-# Legacy compat — kept so existing route import still works
-def stream_channel(channel_id: str, pluto_url: str) -> Iterator[bytes]:
-    """Deprecated MPEG-TS pipe path — kept for backward compat only."""
-    logger.warning("[pluto-x11] stream_channel() pipe path called — use HLS routes instead")
-    yield b""
