@@ -255,6 +255,9 @@
     }
     .cat-label.cat-empty { color: var(--text-dim); border-bottom-style: dashed; }
     .cat-label:hover { border-bottom-color: var(--text-soft); color: var(--text); }
+    .ch-name-label { cursor: pointer; }
+    .ch-name-label:hover { text-decoration: underline dotted; }
+    .ch-name-input { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: inherit; font-weight: 700; width: 200px; }
     .cat-label.has-override { border-bottom-color: var(--warning-strong); color: var(--warning-strong) !important; }
     .lang-label {
       cursor: pointer; border-bottom: 1px dotted var(--text-dim);
@@ -1516,7 +1519,9 @@
             {% if ch.last_seen_at %}
               {% set _ = hover_parts.append('Last seen: ' ~ (ch.last_seen_at | localtime)) %}
             {% endif %}
-            <td title="{{ hover_parts|join(' · ') if hover_parts else '' }}"><strong>{{ ch.name }}</strong></td>
+            <td title="{{ hover_parts|join(' · ') if hover_parts else '' }}">
+              <strong class="ch-name-label" data-channel-id="{{ ch.id }}" onclick="openNameInline(event, {{ ch.id }})" title="Click to rename">{{ ch.name }}</strong>
+            </td>
             <td style="white-space:nowrap;padding-left:0.25rem;padding-right:0.25rem">{% if ch.name in duplicate_names %}<span class="dup-badge badge-dup-clickable" data-channel-id="{{ ch.id }}" style="cursor:pointer" title="Duplicate match found — click to see matches">DUP</span>{% elif ch.name in possible_duplicate_names %}<span class="dup-badge badge-dup-clickable" data-channel-id="{{ ch.id }}" style="cursor:pointer" title="Possible duplicate — click to see matches">DUP?</span>{% elif ch.id in gn_duplicate_ids %}<span class="dup-badge badge-dup-clickable" data-channel-id="{{ ch.id }}" style="cursor:pointer" title="Same Gracenote ID found on another source — click to see matches">GN DUP</span>{% endif %}{% if ch.is_duplicate %}<span class="badge-manual-dup badge-dup-clickable" data-channel-id="{{ ch.id }}" title="Click to see potential duplicates" style="cursor:pointer">DUPL</span>{% endif %}</td>
             <td style="color:var(--text-muted)">{{ ch.source.display_name }}{% if ch.source.epg_only %} <span class="badge-epg-only" title="Source is EPG-only — excluded from M3U output">EPG</span>{% endif %}</td>
             <td style="white-space:nowrap;padding-left:0.25rem;padding-right:0.25rem">{% if ch.stream_info %}{% if ch.stream_info.has_4k %}<span class="badge-4k" title="4K stream ({{ ch.stream_info.max_resolution }})">4K</span>{% elif ch.stream_info.has_hd %}<span class="badge-hd" title="HD stream ({{ ch.stream_info.max_resolution }})">HD</span>{% endif %}{% if ch.stream_info.video_codec == 'hevc' %}<span class="badge-hevc" title="H.265/HEVC — may not play in all clients">HEVC</span>{% endif %}{% endif %}</td>
@@ -3982,6 +3987,51 @@
       span.textContent = isEmpty ? '—' : val;
       span.onclick = (e) => openCatInline(e, chId);
       if (inp) inp.replaceWith(span); else cell.prepend(span);
+    }
+
+    // ── Inline name editing ──────────────────────────────────────────────
+    function openNameInline(e, chId) {
+      const label = e.currentTarget;
+      if (label.querySelector && label.tagName === 'INPUT') return;
+      const cell = label.closest('td');
+      if (cell.querySelector('.ch-name-input')) return;
+      const currentName = label.textContent.trim();
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'ch-name-input';
+      inp.value = currentName;
+      inp.maxLength = 200;
+      label.replaceWith(inp);
+      inp.focus();
+      inp.select();
+      async function commit() {
+        if (!document.contains(inp)) return;
+        const val = inp.value.trim();
+        if (!val || val === currentName) { _restoreNameLabel(inp, chId, currentName); return; }
+        try {
+          const r = await fetch(`/api/channels/${chId}`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: val}),
+          });
+          if (!r.ok) throw new Error('save failed');
+          _restoreNameLabel(inp, chId, val);
+        } catch { _restoreNameLabel(inp, chId, currentName); }
+      }
+      inp.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+        if (ev.key === 'Escape') { _restoreNameLabel(inp, chId, currentName); }
+      });
+      inp.addEventListener('blur', () => { if (document.contains(inp)) commit(); });
+    }
+    function _restoreNameLabel(inp, chId, name) {
+      const label = document.createElement('strong');
+      label.className = 'ch-name-label';
+      label.dataset.channelId = chId;
+      label.title = 'Click to rename';
+      label.textContent = name;
+      label.onclick = (e) => openNameInline(e, chId);
+      inp.replaceWith(label);
     }
 
     // Keep modal functions as no-ops for any lingering references
