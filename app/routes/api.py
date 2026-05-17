@@ -979,6 +979,13 @@ def update_channel(channel_id):
     return jsonify(ch.to_dict())
 
 
+@api_bp.route('/channels/cat-options', methods=['GET'])
+def channel_cat_options():
+    """Return the list of canonical category names for the inline category editor."""
+    from ..scrapers.category_utils import CANONICAL_CATEGORIES
+    return jsonify(sorted(CANONICAL_CATEGORIES))
+
+
 @api_bp.route('/channels/<int:channel_id>/category-explain', methods=['GET'])
 def channel_category_explain(channel_id):
     from ..scrapers.category_utils import explain_category, CANONICAL_CATEGORIES, category_for_channel
