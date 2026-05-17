@@ -14,7 +14,7 @@ from sqlalchemy.exc import OperationalError
 from app.config_store import persist_source_config_updates
 from app.config import VERSION
 from ..extensions import db
-from ..models import Source, Channel, Program, AppSettings, Feed
+from ..models import Source, Channel, Program, AppSettings, Feed, FeedChannelNumber
 from ..scrapers import registry
 from ..scrapers.base import StreamDeadError
 from ..gracenote_suggest import SuggestionChannel, suggest_gracenote_matches
@@ -1845,12 +1845,47 @@ def channel_feed_membership(channel_id):
                 feed_id=feed.id if feed.chnum_start is not None else None,
             )
             feed_channel_number = chnum_map.get(channel_id)
+        # Check if this channel has a user-pinned feed number
+        fcn_row = FeedChannelNumber.query.filter_by(feed_id=feed.id, channel_id=channel_id).first()
+        feed_number_pinned = bool(fcn_row and fcn_row.user_pinned) if fcn_row else False
         result.append({
             'feed_id': feed.id,
             'status': status,
             'feed_channel_number': feed_channel_number,
+            'feed_number_pinned': feed_number_pinned,
         })
     return jsonify(result)
+
+
+@api_bp.route('/feeds/<int:feed_id>/channel-number/<int:channel_id>', methods=['PUT'])
+def set_feed_channel_number(feed_id, channel_id):
+    """Manually pin a channel number for a specific channel within a feed."""
+    feed = Feed.query.get_or_404(feed_id)
+    channel = Channel.query.get_or_404(channel_id)
+    data = request.get_json() or {}
+    number = data.get('number')
+    if number is None or not isinstance(number, int) or number < 1:
+        return jsonify({'error': 'number must be a positive integer'}), 400
+    row = FeedChannelNumber.query.filter_by(feed_id=feed_id, channel_id=channel_id).first()
+    if row:
+        row.number = number
+        row.user_pinned = True
+    else:
+        row = FeedChannelNumber(feed_id=feed_id, channel_id=channel_id, number=number, user_pinned=True)
+        db.session.add(row)
+    db.session.commit()
+    return jsonify({'feed_id': feed_id, 'channel_id': channel_id, 'number': number, 'user_pinned': True})
+
+
+@api_bp.route('/feeds/<int:feed_id>/channel-number/<int:channel_id>', methods=['DELETE'])
+def clear_feed_channel_number(feed_id, channel_id):
+    """Remove a user-pinned channel number for a channel within a feed (revert to auto)."""
+    row = FeedChannelNumber.query.filter_by(feed_id=feed_id, channel_id=channel_id).first()
+    if row:
+        if row.user_pinned:
+            db.session.delete(row)
+            db.session.commit()
+    return jsonify({'feed_id': feed_id, 'channel_id': channel_id, 'cleared': True})
 
 
 @api_bp.route('/channels/duplicate-summary', methods=['GET'])

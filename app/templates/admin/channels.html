@@ -1133,8 +1133,8 @@
     #pinFeedDropdown {
       position: fixed; z-index: 9999; background: var(--surface-2); border: 1px solid var(--border);
       border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); padding: 0.4rem 0;
-      min-width: 180px; max-width: 260px; display: none;
-      max-height: 260px; overflow-y: auto;
+      min-width: 220px; max-width: 320px; display: none;
+      max-height: 300px; overflow-y: auto;
     }
     #pinFeedDropdown .pfd-header {
       font-size: 0.72rem; color: var(--text-muted); padding: 0.3rem 0.75rem 0.4rem;
@@ -1145,6 +1145,8 @@
       padding: 0.4rem 0.75rem; color: var(--text); font-size: 0.85rem; cursor: pointer;
     }
     #pinFeedDropdown button:hover { background: var(--surface-3); color: var(--accent-soft); }
+    #pinFeedDropdown > div:hover { background: var(--surface-3); }
+    #pinFeedDropdown > div button:hover { background: none; }
     #pinFeedDropdown .pfd-empty { padding: 0.5rem 0.75rem; color: var(--text-muted); font-size: 0.82rem; }
   </style>
   {% include 'admin/_theme_head.html' %}
@@ -1223,12 +1225,16 @@
           </div>
           <div class="filter-group">
             <label class="filter-label" for="category-filter">Category</label>
-            <select id="category-filter" name="category">
-              <option value="">All Categories</option>
+            <input type="text" id="category-filter" name="category" list="category-datalist"
+              value="{{ category_filter or '' }}"
+              placeholder="All Categories"
+              autocomplete="off"
+              style="width:100%">
+            <datalist id="category-datalist">
               {% for cat, count in categories %}
-              <option value="{{ cat }}" {% if category_filter == cat %}selected{% endif %}>{{ cat }} ({{ count }})</option>
+              <option value="{{ cat }}">{{ cat }} ({{ count }})</option>
               {% endfor %}
-            </select>
+            </datalist>
           </div>
           <div class="filter-group">
             <label class="filter-label" for="enabled-filter">Channel State</label>
@@ -1444,12 +1450,20 @@
               </select>
             </th>
             <th>
-              <select class="col-filter-select{% if category_filter %} col-filter-active{% endif %}" onchange="filterBy('category', this.value)" title="Filter by category">
-                <option value="">Category</option>
+              <input type="text" list="col-category-datalist"
+                class="col-filter-select{% if category_filter %} col-filter-active{% endif %}"
+                placeholder="Category"
+                value="{{ category_filter or '' }}"
+                autocomplete="off"
+                title="Filter by category — type or pick from list"
+                onchange="filterBy('category', this.value.trim())"
+                onkeydown="if(event.key==='Enter'){filterBy('category',this.value.trim())}"
+                style="cursor:text">
+              <datalist id="col-category-datalist">
                 {% for cat, count in categories %}
-                <option value="{{ cat }}" {% if category_filter == cat %}selected{% endif %}>{{ cat }}</option>
+                <option value="{{ cat }}">{{ cat }}</option>
                 {% endfor %}
-              </select>
+              </datalist>
             </th>
             <th style="width:1px;white-space:nowrap">
               <select class="col-filter-select{% if language_filter %} col-filter-active{% endif %}" onchange="filterBy('language', this.value)" title="Filter by language">
@@ -1576,7 +1590,7 @@
                 </div>
                 <button class="btn-preview btn-icon" onclick="openPreview({{ ch.id }})" title="Preview: view current and next program, preview playback">📺</button>
                 <button class="btn-inspect" onclick="inspectChannel({{ ch.id }}, this)" title="Test stream: check DRM, liveness, and segment data">&#128269;</button>
-                <button class="btn-pin-feed{% if ch.id not in in_any_feed_ids %} not-in-feed{% endif %}" onclick="openPinFeedMenu({{ ch.id }}, this)" title="{% if ch.id in in_any_feed_ids %}Manage feed membership{% else %}Not in any feed — add to one{% endif %}">🗂️</button>
+                <button class="btn-pin-feed{% if ch.id not in in_any_feed_ids %} not-in-feed{% endif %}" data-pfd-channel="{{ ch.id }}" onclick="openPinFeedMenu({{ ch.id }}, this)" title="{% if ch.id in in_any_feed_ids %}Manage feed membership{% else %}Not in any feed — add to one{% endif %}">🗂️</button>
                 {% if not ch.is_duplicate %}
                 <button class="btn-mark-dup" id="markdup-{{ ch.id }}" onclick="markManualDup({{ ch.id }}, this)" title="Mark as duplicate — adds a DUPL label for filtering (does not disable the channel)">⊘</button>
                 {% endif %}
@@ -3106,6 +3120,7 @@
             _membershipCache[channelId][d.feed_id] = {
               status: d.status,
               feed_channel_number: d.feed_channel_number,
+              feed_number_pinned: d.feed_number_pinned || false,
             };
           });
         } catch {
@@ -3125,32 +3140,141 @@
       list.innerHTML = '';
 
       FEEDS.forEach(f => {
-        const entry = membership[f.id] || {status: 'absent', feed_channel_number: null};
+        const entry = membership[f.id] || {status: 'absent', feed_channel_number: null, feed_number_pinned: false};
         const status = entry.status || 'absent';
-        const numberBadge = entry.feed_channel_number
-          ? `<span style="color:var(--text-muted);font-size:0.72rem;margin-left:0.45rem">Ch ${entry.feed_channel_number}</span>`
-          : '';
-        const b = document.createElement('button');
-        b.style.display = 'flex';
-        b.style.alignItems = 'center';
+        const isPresent = status !== 'absent';
+        const isPinned = entry.feed_number_pinned;
+        const currentNum = entry.feed_channel_number;
 
+        // Row wrapper
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:0.3rem;padding:0.2rem 0.5rem;';
+
+        // Status button (left)
+        const b = document.createElement('button');
+        b.style.cssText = 'flex:1;display:flex;align-items:center;text-align:left;background:none;border:none;cursor:pointer;padding:0.3rem 0.25rem;border-radius:4px;min-width:0;';
         if (status === 'pinned') {
-          b.innerHTML = `<span style="color:var(--success-border);margin-right:0.4rem">📌</span>${f.name}${numberBadge}<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;padding-left:0.5rem">unpin</span>`;
+          b.innerHTML = `<span style="color:var(--success-border);margin-right:0.4rem">📌</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</span><span style="color:var(--text-muted);font-size:0.72rem;padding-left:0.5rem;white-space:nowrap">unpin</span>`;
           b.onclick = () => _feedAction(channelId, f.id, f.name, 'unpin');
         } else if (status === 'filtered') {
-          b.innerHTML = `<span style="color:var(--accent-soft);margin-right:0.4rem">●</span>${f.name}${numberBadge}<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;padding-left:0.5rem">exclude</span>`;
+          b.innerHTML = `<span style="color:var(--accent-soft);margin-right:0.4rem">●</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</span><span style="color:var(--text-muted);font-size:0.72rem;padding-left:0.5rem;white-space:nowrap">exclude</span>`;
           b.onclick = () => _feedAction(channelId, f.id, f.name, 'exclude');
         } else if (status === 'excluded') {
-          b.innerHTML = `<span style="color:var(--danger);margin-right:0.4rem">✕</span>${f.name}${numberBadge}<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;padding-left:0.5rem">re-add</span>`;
+          b.innerHTML = `<span style="color:var(--danger);margin-right:0.4rem">✕</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</span><span style="color:var(--text-muted);font-size:0.72rem;padding-left:0.5rem;white-space:nowrap">re-add</span>`;
           b.onclick = () => _feedAction(channelId, f.id, f.name, 'unexclude');
         } else {
-          b.innerHTML = f.name;
+          b.innerHTML = `<span style="color:var(--text-dim);margin-right:0.4rem">○</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</span>`;
           b.onclick = () => _feedAction(channelId, f.id, f.name, 'pin');
         }
-        list.appendChild(b);
+        row.appendChild(b);
+
+        // Per-feed channel number input (only when channel is in the feed)
+        if (isPresent) {
+          const numWrap = document.createElement('span');
+          numWrap.style.cssText = 'display:flex;align-items:center;gap:0.15rem;flex-shrink:0;';
+
+          if (isPinned) {
+            // Show pinned number with clear (🔒) button
+            const badge = document.createElement('span');
+            badge.style.cssText = 'font-size:0.72rem;color:var(--success-soft);white-space:nowrap;cursor:pointer;';
+            badge.title = 'Feed channel number (pinned) — click to edit';
+            badge.textContent = `Ch ${currentNum}`;
+            badge.onclick = (e) => { e.stopPropagation(); _startFeedNumEdit(numWrap, channelId, f.id, currentNum, true); };
+            const clearBtn = document.createElement('button');
+            clearBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:0;font-size:0.7rem;opacity:0.6;color:var(--success-soft);';
+            clearBtn.title = 'Remove pin — revert to auto';
+            clearBtn.textContent = '🔒';
+            clearBtn.onclick = (e) => { e.stopPropagation(); _clearFeedNum(channelId, f.id, numWrap, entry); };
+            numWrap.appendChild(badge);
+            numWrap.appendChild(clearBtn);
+          } else {
+            // Show auto number with edit pencil
+            const badge = document.createElement('span');
+            badge.style.cssText = 'font-size:0.72rem;color:var(--text-muted);white-space:nowrap;cursor:pointer;';
+            badge.title = 'Feed channel number (auto) — click to pin a custom number';
+            badge.textContent = currentNum ? `Ch ${currentNum}` : 'Ch ?';
+            badge.onclick = (e) => { e.stopPropagation(); _startFeedNumEdit(numWrap, channelId, f.id, currentNum, false); };
+            numWrap.appendChild(badge);
+          }
+          row.appendChild(numWrap);
+        }
+
+        list.appendChild(row);
       });
 
       _positionDropdown(menu, btn);
+    }
+
+    function _startFeedNumEdit(wrap, channelId, feedId, currentNum, isPinned) {
+      wrap.innerHTML = '';
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.min = 1;
+      inp.value = currentNum || '';
+      inp.placeholder = 'Ch #';
+      inp.style.cssText = 'width:54px;font-size:0.78rem;padding:1px 3px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;';
+      inp.onclick = (e) => e.stopPropagation();
+      inp.onkeydown = async (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); await _saveFeedNum(channelId, feedId, inp.value, wrap); }
+        if (e.key === 'Escape') { delete _membershipCache[channelId]; _renderPinDropdown(channelId, document.querySelector('[data-pfd-channel="' + channelId + '"]') || document.body); }
+      };
+      inp.onblur = async () => { if (document.contains(inp)) await _saveFeedNum(channelId, feedId, inp.value, wrap); };
+      wrap.appendChild(inp);
+      inp.focus();
+      inp.select();
+    }
+
+    async function _saveFeedNum(channelId, feedId, rawVal, wrap) {
+      const val = parseInt(rawVal);
+      if (!rawVal || isNaN(val) || val < 1) {
+        delete _membershipCache[channelId];
+        _refreshMembershipAndRedraw(channelId);
+        return;
+      }
+      try {
+        const r = await fetch(`/api/feeds/${feedId}/channel-number/${channelId}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({number: val}),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        delete _membershipCache[channelId];
+        await _refreshMembershipAndRedraw(channelId);
+        showToast(`✓ Feed channel number set to ${val}`);
+      } catch (e) {
+        console.error('Feed chnum save failed:', e);
+        delete _membershipCache[channelId];
+        _refreshMembershipAndRedraw(channelId);
+      }
+    }
+
+    async function _clearFeedNum(channelId, feedId, wrap, entry) {
+      try {
+        const r = await fetch(`/api/feeds/${feedId}/channel-number/${channelId}`, {method: 'DELETE'});
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        delete _membershipCache[channelId];
+        await _refreshMembershipAndRedraw(channelId);
+        showToast('Feed channel number unpinned');
+      } catch (e) {
+        console.error('Feed chnum clear failed:', e);
+      }
+    }
+
+    async function _refreshMembershipAndRedraw(channelId) {
+      try {
+        const r = await fetch(`/api/channels/${channelId}/feed-membership`);
+        const data = await r.json();
+        _membershipCache[channelId] = {};
+        data.forEach(d => {
+          _membershipCache[channelId][d.feed_id] = {
+            status: d.status,
+            feed_channel_number: d.feed_channel_number,
+            feed_number_pinned: d.feed_number_pinned,
+          };
+        });
+      } catch {}
+      const btn = document.querySelector(`[data-pfd-channel="${channelId}"]`);
+      if (btn) _renderPinDropdown(channelId, btn);
     }
 
     async function _feedAction(channelId, feedId, feedName, action) {

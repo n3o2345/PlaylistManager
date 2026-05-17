@@ -246,9 +246,10 @@ class FeedChannelNumber(db.Model):
     """Persistent feed-specific channel number assignments (sticky tvg-chno for feeds)."""
     __tablename__ = 'feed_channel_numbers'
 
-    feed_id    = db.Column(db.Integer, db.ForeignKey('feeds.id',    ondelete='CASCADE'), primary_key=True)
-    channel_id = db.Column(db.Integer, db.ForeignKey('channels.id', ondelete='CASCADE'), primary_key=True)
-    number     = db.Column(db.Integer, nullable=False)
+    feed_id     = db.Column(db.Integer, db.ForeignKey('feeds.id',    ondelete='CASCADE'), primary_key=True)
+    channel_id  = db.Column(db.Integer, db.ForeignKey('channels.id', ondelete='CASCADE'), primary_key=True)
+    number      = db.Column(db.Integer, nullable=False)
+    user_pinned = db.Column(db.Boolean, nullable=False, default=False)
 
     __table_args__ = (db.Index('ix_feed_channel_numbers_feed_id', 'feed_id'),)
 

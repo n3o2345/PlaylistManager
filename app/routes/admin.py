@@ -401,7 +401,7 @@ def channels():
     if country_filter:
         q = q.filter(Channel.country == country_filter)
     if category_filter:
-        q = q.filter(Channel.category == category_filter)
+        q = q.filter(Channel.category.ilike(category_filter))
     if search:
         q = q.filter(Channel.name.ilike(f'%{search}%'))
 

@@ -502,7 +502,8 @@ def _build_source_chnum_map(channels):
 
 
 def _build_feed_chnum_map(channels, feed_chnum_start: int,
-                          stored_numbers: dict[int, int] | None = None):
+                          stored_numbers: dict[int, int] | None = None,
+                          user_pinned_channel_ids: set | None = None):
     """
     Sticky sequential numbering for a feed-level chnum_start.
 
@@ -510,16 +511,27 @@ def _build_feed_chnum_map(channels, feed_chnum_start: int,
     previously-assigned feed number from `stored_numbers` (persisted in
     FeedChannelNumber) if it is >= feed_chnum_start and still free.  Only new
     or displaced channels get freshly assigned sequential numbers.
+
+    user_pinned_channel_ids: channel IDs whose FeedChannelNumber was manually
+    set by the user — these always keep their stored number, like global
+    number_pinned channels.
     """
     used_numbers: set[int] = set()
     result: dict[int, int] = {}
     unassigned = []
+    _user_pinned = user_pinned_channel_ids or set()
 
-    # First pass: honour pinned channels and preserve valid stored assignments.
+    # First pass: honour globally-pinned and user-pinned-feed channels first.
     for ch in channels:
-        if getattr(ch, 'number_pinned', False) and ch.number is not None:
+        is_globally_pinned = getattr(ch, 'number_pinned', False) and ch.number is not None
+        is_feed_pinned = ch.id in _user_pinned and stored_numbers and ch.id in stored_numbers
+        if is_globally_pinned:
             result[ch.id] = ch.number
             used_numbers.add(ch.number)
+        elif is_feed_pinned:
+            num = stored_numbers[ch.id]
+            result[ch.id] = num
+            used_numbers.add(num)
         else:
             stored = stored_numbers.get(ch.id) if stored_numbers else None
             if stored is not None and stored >= feed_chnum_start and stored not in used_numbers:
@@ -579,11 +591,13 @@ def _resolve_chnum_map(channels, *, feed_chnum_start: int = None,
         return _build_feed_chnum_map(channels, namespace_start), []
     if feed_chnum_start is not None:
         stored_numbers: dict[int, int] = {}
+        user_pinned_numbers: set[int] = set()
         if feed_id is not None:
             from app.models import FeedChannelNumber
             rows = FeedChannelNumber.query.filter_by(feed_id=feed_id).all()
             stored_numbers = {r.channel_id: r.number for r in rows}
-        return _build_feed_chnum_map(channels, feed_chnum_start, stored_numbers=stored_numbers), []
+            user_pinned_numbers = {r.channel_id for r in rows if r.user_pinned}
+        return _build_feed_chnum_map(channels, feed_chnum_start, stored_numbers=stored_numbers, user_pinned_channel_ids=user_pinned_numbers), []
     return _build_source_chnum_map(channels)
 
 
