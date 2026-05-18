@@ -598,24 +598,31 @@ def main():
                         hasSrc: !!(v.src || v.currentSrc), buffered: buffered};
             }""")
             if r.get("found"):
-                rs  = r.get("readyState", 0)
-                buf = r.get("buffered", 0)
+                rs      = r.get("readyState", 0)
+                buf     = r.get("buffered", 0)
                 has_src = r.get("hasSrc", False)
-                # Signal ready as soon as the element has a source and can decode
-                if has_src and rs >= 2:
+                paused  = r.get("paused", True)
+                # Must be unpaused AND have data before signaling OK.
+                # Exiting while paused causes ffmpeg to capture black frames
+                # until the user manually unpauses — the player has data but
+                # Pluto's React player is still in paused state post-fullscreen.
+                if has_src and rs >= 2 and not paused:
                     video_started = True
                     break
-                # Also accept if already buffering even without readyState advancing
-                if buf > 0.5:
+                # Also accept if buffering and unpaused
+                if buf > 0.5 and not paused:
                     video_started = True
                     break
-            # Nudge: dismiss blocking dialogs and retry play()
+            # Nudge: dismiss blocking dialogs and force play() — we stay in
+            # this loop until the video is confirmed unpaused, so we need to
+            # actively retry on every poll tick.
             try:
                 page.evaluate("""() => {
                     for (const btn of document.querySelectorAll('button,[role="button"]')) {
                         const t = (btn.textContent||'').toLowerCase();
-                        if (['accept','agree','got it','ok','close','continue',
-                             'i agree','watch'].some(w=>t.includes(w))
+                        if (['still watching','accept','agree','got it','ok','close',
+                             'continue','i agree','watch','keep watching','yes'
+                             ].some(w=>t.includes(w))
                             && btn.offsetParent !== null) { btn.click(); return; }
                     }
                     const v = document.querySelector('video');
