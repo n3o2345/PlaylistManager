@@ -536,12 +536,11 @@ def main():
                     if (ac.state === 'suspended') ac.resume();
                 } catch(e) {}
             }
+            // Unmute only — do NOT call v.play() here.
+            // CDP fullscreen triggers Pluto's React player to reset playback
+            // state, so any play() call before setWindowBounds is cancelled.
             const v = document.querySelector('video');
-            if (v) {
-                v.muted  = false;
-                v.volume = 1.0;
-                if (v.paused) v.play().catch(() => {});
-            }
+            if (v) { v.muted = false; v.volume = 1.0; }
         }""")
     except Exception:
         pass
@@ -559,7 +558,12 @@ def main():
         except Exception:
             pass
 
-    # Click play
+    # Settle delay: let Pluto's React player finish re-initializing after the
+    # fullscreen transition before we attempt play().  Without this the
+    # player's internal paused-state flag wins and the video stays paused.
+    time.sleep(0.4)
+
+    # Click play — runs AFTER fullscreen has settled
     try:
         page.evaluate("""() => {
             for (const sel of ['[aria-label*="Play" i]','[aria-label*="Watch" i]',
@@ -631,17 +635,13 @@ def main():
     # iteration regardless of whether the main process sends anything.
     # (The old blocking readline() meant keepalive never ran, letting Pluto's
     # "Still watching?" overlay pause the stream after ~60 s.)
+    #
+    # Fire once immediately on entry so any residual paused state (e.g. from
+    # the fullscreen transition landing after the wait loop exited) is fixed
+    # within milliseconds rather than waiting up to 15 s.
     import select as _select
-    while True:
-        try:
-            r, _, _ = _select.select([control_pipe], [], [], 15.0)
-            if r:
-                line = control_pipe.readline()
-                if not line or line.strip() == "STOP":
-                    break
-        except Exception:
-            break
-        # keepalive tick — runs every 15 s
+
+    def _keepalive_tick():
         try:
             page.evaluate("""() => {
                 // Dismiss "Still Watching?" and similar overlays
@@ -677,6 +677,22 @@ def main():
             }""")
         except Exception:
             pass
+
+    # Immediate tick — fixes any paused state from the fullscreen transition
+    # before the first 15 s window expires.
+    _keepalive_tick()
+
+    while True:
+        try:
+            r, _, _ = _select.select([control_pipe], [], [], 15.0)
+            if r:
+                line = control_pipe.readline()
+                if not line or line.strip() == "STOP":
+                    break
+        except Exception:
+            break
+        # keepalive tick — runs every 15 s
+        _keepalive_tick()
 
     try:
         page.close(); context.close(); browser.close(); pw.stop()
@@ -2144,6 +2160,138 @@ def clear_cookies(cookie_path: str | None = None) -> None:
         logger.info("[pluto-x11] cookies cleared: %s", cookie_path)
     except FileNotFoundError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Direct HLS URL resolver — bypasses x11grab for M3U/Dispatcharr clients
+# ---------------------------------------------------------------------------
+#
+# Pluto's boot API returns HLS manifest URLs for every live channel.
+# M3U clients (Dispatcharr, VLC, Plex, etc.) can play these directly without
+# going through the Xvfb → x11grab → ffmpeg → MPEG-TS pipeline, cutting
+# client-side startup latency from ~8 s to <1 s.
+#
+# Usage:
+#   url, headers = resolve_stream_url(channel_id)
+#   # url  → HLS .m3u8 manifest, ready to feed to an M3U playlist
+#   # headers → dict of HTTP headers the client must send with every request
+#
+# The function caches results for STREAM_URL_CACHE_TTL seconds so repeated
+# channel requests don't hammer the boot endpoint.
+
+STREAM_URL_CACHE_TTL = int(os.environ.get("PLUTO_X11_URL_CACHE_TTL", "300"))  # 5 min
+
+_stream_url_cache: dict[str, tuple[str, dict, float]] = {}  # {channel_id: (url, headers, ts)}
+_stream_url_cache_lock = threading.Lock()
+
+
+def resolve_stream_url(channel_id: str) -> tuple[str, dict] | tuple[None, None]:
+    """
+    Return (hls_url, request_headers) for *channel_id* using Pluto's boot API.
+
+    The HLS URL and accompanying headers are valid for STREAM_URL_CACHE_TTL
+    seconds (default 5 min).  Returns (None, None) on failure.
+
+    Headers returned must be forwarded by the HTTP client on every segment
+    request — they include Authorization and the required Pluto request headers.
+    """
+    now = time.monotonic()
+    with _stream_url_cache_lock:
+        cached = _stream_url_cache.get(channel_id)
+        if cached and now - cached[2] < STREAM_URL_CACHE_TTL:
+            return cached[0], cached[1]
+
+    try:
+        boot_token, session = _pluto_boot()
+    except RuntimeError as exc:
+        logger.warning("[pluto-x11] resolve_stream_url boot failed: %s", exc)
+        return None, None
+
+    client_id = _get_or_create_client_id()
+    params = {
+        "appName":           "web",
+        "appVersion":        _PLUTO_APP_VERSION,
+        "deviceVersion":     _PLUTO_DEVICE_VERSION,
+        "deviceMake":        "edge-chromium",
+        "deviceModel":       "web",
+        "deviceType":        "web",
+        "clientID":          client_id,
+        "clientModelNumber": "1.0",
+        "serverSideAds":     "false",
+        "channelID":         channel_id,
+        "clientTime":        str(int(time.time() * 1000)),
+    }
+    auth_headers = {
+        **_PLUTO_BASE_HEADERS,
+        "Authorization": f"Bearer {boot_token}",
+    }
+
+    # Try the channels endpoint first, then fall back to the boot response's
+    # channel list which includes stitchedStream URLs.
+    hls_url: str | None = None
+
+    # Path 1: dedicated HLS endpoint
+    try:
+        resp = session.get(
+            f"https://api.pluto.tv/v2/channels/{channel_id}",
+            params={"appName": "web", "appVersion": _PLUTO_APP_VERSION,
+                    "deviceType": "web", "clientID": client_id},
+            headers=auth_headers,
+            timeout=10,
+        )
+        if resp.ok:
+            data = resp.json()
+            # Response shape: {"stitchedStream": {"url": "..."}, ...}
+            hls_url = (
+                (data.get("stitchedStream") or {}).get("url")
+                or (data.get("streamingUrl"))
+                or (data.get("url"))
+            )
+    except Exception as exc:
+        logger.debug("[pluto-x11] channels API error: %s", exc)
+
+    # Path 2: live channels list (includes stitchedStream for all channels)
+    if not hls_url:
+        try:
+            resp = session.get(
+                "https://api.pluto.tv/v2/channels",
+                params={"appName": "web", "appVersion": _PLUTO_APP_VERSION,
+                        "deviceType": "web", "clientID": client_id},
+                headers=auth_headers,
+                timeout=15,
+            )
+            if resp.ok:
+                channels = resp.json()
+                if isinstance(channels, list):
+                    for ch in channels:
+                        if ch.get("_id") == channel_id or ch.get("id") == channel_id:
+                            hls_url = (
+                                (ch.get("stitchedStream") or {}).get("url")
+                                or ch.get("streamingUrl")
+                            )
+                            break
+        except Exception as exc:
+            logger.debug("[pluto-x11] channels list API error: %s", exc)
+
+    if not hls_url:
+        logger.warning("[pluto-x11] resolve_stream_url: no HLS URL found for ch=%s", channel_id)
+        return None, None
+
+    # Inject clientID into the URL if Pluto's template uses it
+    hls_url = hls_url.replace("{clientID}", client_id).replace("{deviceID}", client_id)
+
+    request_headers = {
+        "User-Agent":    _PLUTO_UA,
+        "Origin":        "https://pluto.tv",
+        "Referer":       "https://pluto.tv/",
+        "Authorization": f"Bearer {boot_token}",
+    }
+
+    with _stream_url_cache_lock:
+        _stream_url_cache[channel_id] = (hls_url, request_headers, now)
+
+    logger.info("[pluto-x11] resolve_stream_url ch=%s → %s…", channel_id, hls_url[:80])
+    return hls_url, request_headers
 
 
 # ---------------------------------------------------------------------------
