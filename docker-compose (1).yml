@@ -1,0 +1,68 @@
+# docker-compose.yml
+# Base compose file — works CPU-only out of the box.
+# For GPU acceleration overlay one of:
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.vaapi.yml up -d
+
+services:
+  playlistmanager:
+    container_name: playlistmanager
+    image: ghcr.io/n3o2345/playlistmanager:latest
+    restart: unless-stopped
+    ports:
+      - '5523:5523'
+    volumes:
+      - db_data:/data
+    environment:
+      # ── Embedded tvapp2 daemon ──────────────────────────────────────────────
+      TVAPP2_ENABLED: 1
+      TVAPP2_STREAM_QUALITY: hd
+      TVAPP2_LOG_LEVEL: 2
+
+      # ── Pluto X11 screen-grab ───────────────────────────────────────────────
+      # Set PLUTO_X11_ENABLED=0 to disable and fall back to HLS proxy.
+      PLUTO_X11_ENABLED: 1
+
+      # ── Transcoding preset (applies to all pipelines) ───────────────────────
+      # Named preset selects resolution + fps + bitrate + encoder quality in one.
+      # Options: 480p | 720p | 720p_high | 1080p | 1080p_high | 4k_preview
+      # Individual overrides below take priority over the preset.
+      TRANSCODE_PRESET: "720p"
+
+      # Encoder: auto-detected (nvenc > vaapi > libx264) unless forced here.
+      # For GPU encoding overlay docker-compose.nvidia.yml or docker-compose.vaapi.yml.
+      # TRANSCODE_ENCODER: nvenc
+
+      # Fine-grained overrides (uncomment to override the preset):
+      # TRANSCODE_WIDTH: 1280
+      # TRANSCODE_HEIGHT: 720
+      # TRANSCODE_FPS: 30
+      # TRANSCODE_BITRATE: "2500k"
+      # TRANSCODE_NVENC_PRESET: p2   # p1=fastest…p7=best, default varies by preset
+      # TRANSCODE_VAAPI_QP: 24       # 18=excellent…28=acceptable
+      # Persist Pluto login cookies/device id on the /data volume so reboots
+      # and image rebuilds do not force a fresh browser login.
+      FASTCHANNELS_AUTH_DIR: /data/auth
+      PLUTO_X11_COOKIE_PATH: /data/auth/pluto_x11_cookies.json
+      PLUTO_X11_CLIENT_ID_PATH: /data/auth/pluto_x11_client_id
+      # Maximum seconds to wait for Chromium to load Pluto's player before
+      # grabbing. The worker now starts as soon as video is ready.
+      PLUTO_X11_STARTUP_WAIT: 8
+      # Real apt Chromium — no "Chrome for Testing" banner that Pluto detects.
+      # Playwright's bundled binary is only used as a fallback if this is unset.
+      CHROMIUM_PATH: /usr/bin/chromium
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -sf http://localhost:5523/health || exit 1
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+
+    # Chromium needs adequate shared memory
+    shm_size: 256m
+
+volumes:
+  db_data:

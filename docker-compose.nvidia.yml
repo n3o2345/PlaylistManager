@@ -27,8 +27,16 @@ services:
 
       # Force h264_nvenc — skips the runtime probe which can race if the
       # NVIDIA kernel module hasn't fully initialised before the first
-      # Pluto session starts.  Remove to re-enable auto-detection.
-      PLUTO_X11_ENCODER: h264_nvenc
+      # encode starts.  Remove to re-enable auto-detection.
+      TRANSCODE_ENCODER: nvenc
+
+      # Named quality preset.  Tune to your GPU / bandwidth.
+      # 720p=default  1080p=HD  1080p_high=HD 60fps  (see transcode.py for full list)
+      TRANSCODE_PRESET: 1080p
+
+      # NVENC quality preset: p1 (fastest) … p7 (best quality).
+      # p3 is a good balance for 1080p live capture on mid-range GPUs.
+      TRANSCODE_NVENC_PRESET: p3
 
       # nvenc init adds ~2 s on first encode; give Chromium the extra headroom.
       PLUTO_X11_STARTUP_WAIT: 15

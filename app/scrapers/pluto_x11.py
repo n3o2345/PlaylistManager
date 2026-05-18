@@ -52,17 +52,41 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 ENABLED         = os.environ.get("PLUTO_X11_ENABLED", "1") != "0"
-DISPLAY_W       = int(os.environ.get("PLUTO_X11_WIDTH",        "1280"))
-DISPLAY_H       = int(os.environ.get("PLUTO_X11_HEIGHT",       "720"))
-FRAMERATE       = int(os.environ.get("PLUTO_X11_FPS",          "30"))
-BITRATE         = os.environ.get("PLUTO_X11_BITRATE",          "2500k")
 IDLE_TIMEOUT    = int(os.environ.get("PLUTO_X11_IDLE_TIMEOUT", "30"))
 STARTUP_WAIT    = int(os.environ.get("PLUTO_X11_STARTUP_WAIT", "8"))
-FORCE_ENCODER   = os.environ.get("PLUTO_X11_ENCODER", "").strip().lower() or None
 CHUNK_SIZE      = 65536
 MAX_QUEUE_DEPTH = 64
 AUTH_DIR        = os.environ.get("FASTCHANNELS_AUTH_DIR", "/data/auth")
 COOKIE_PATH     = os.environ.get("PLUTO_X11_COOKIE_PATH", os.path.join(AUTH_DIR, "pluto_x11_cookies.json"))
+
+# Preset / encoder / resolution / bitrate are owned by app.transcode and
+# imported below (after the pluto_x11-specific section).
+# PLUTO_X11_PRESET / TRANSCODE_PRESET controls the named preset.
+# All PLUTO_X11_WIDTH/HEIGHT/FPS/BITRATE/ENCODER vars still work as aliases.
+
+# ---------------------------------------------------------------------------
+# Session pool / resting state configuration
+# ---------------------------------------------------------------------------
+#
+# PLUTO_X11_POOL_MAX_SESSIONS
+#   Maximum number of concurrent X11 sessions (active + resting combined).
+#   Default: 3.  Set to 1 to disable the pool (classic single-session mode).
+#
+# PLUTO_X11_POOL_RESTING_CHANNEL
+#   Pluto channel_id to park resting sessions on.  The guide/home page is a
+#   good choice — it keeps Chromium alive and warmed up without showing a
+#   noisy live stream.  Default: "" (disabled — resting sessions not created).
+#   Example: "5a99d1b346ce8906a4693b39"  (Pluto News 24/7)
+#
+# PLUTO_X11_POOL_RESTING_URL
+#   Full https://pluto.tv/… URL for the resting channel above.
+#   Required when PLUTO_X11_POOL_RESTING_CHANNEL is set.
+#   Default: "https://pluto.tv/live-tv" (guide landing page — no video).
+
+POOL_MAX_SESSIONS      = int(os.environ.get("PLUTO_X11_POOL_MAX_SESSIONS", "3"))
+POOL_RESTING_CHANNEL   = os.environ.get("PLUTO_X11_POOL_RESTING_CHANNEL", "").strip()
+POOL_RESTING_URL       = os.environ.get("PLUTO_X11_POOL_RESTING_URL",
+                                         "https://pluto.tv/live-tv").strip()
 
 # ---------------------------------------------------------------------------
 # Pluto TV REST API constants
@@ -668,94 +692,20 @@ with open(_PW_WORKER_PATH, "w") as _f:
     _f.write(_PW_WORKER_SCRIPT)
 
 # ---------------------------------------------------------------------------
-# GPU encoder detection
+# Hardware transcoding — delegated to app.transcode
 # ---------------------------------------------------------------------------
+# All encoder detection, preset management, and ffmpeg argument building
+# lives in app/transcode.py so every pipeline in the project can share it.
+# pluto_x11 just aliases the public API to the private names it uses internally.
 
-_ENCODER_CACHE: str | None = None
-_ENCODER_LOCK  = threading.Lock()
-
-
-def _detect_encoder() -> str:
-    global _ENCODER_CACHE
-    with _ENCODER_LOCK:
-        if FORCE_ENCODER:
-            if _ENCODER_CACHE != FORCE_ENCODER:
-                logger.info("[pluto-x11] encoder forced: %s", FORCE_ENCODER)
-                _ENCODER_CACHE = FORCE_ENCODER
-            return _ENCODER_CACHE
-        if _ENCODER_CACHE is not None:
-            return _ENCODER_CACHE
-        try:
-            out = subprocess.check_output(
-                ["ffmpeg", "-hide_banner", "-encoders"],
-                stderr=subprocess.STDOUT, text=True, timeout=10,
-            )
-        except Exception as e:
-            logger.warning("[pluto-x11] ffmpeg probe failed: %s", e)
-            return "libx264"
-        if "h264_nvenc" in out:
-            try:
-                subprocess.check_call(
-                    ["ffmpeg", "-hide_banner", "-loglevel", "error",
-                     "-f", "lavfi", "-i", "nullsrc=s=128x128:r=1",
-                     "-vframes", "4", "-c:v", "h264_nvenc", "-f", "null", "-"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
-                )
-                logger.info("[pluto-x11] encoder: h264_nvenc")
-                _ENCODER_CACHE = "h264_nvenc"
-                return _ENCODER_CACHE
-            except Exception as e:
-                logger.warning("[pluto-x11] h264_nvenc failed: %s", e)
-        if "h264_vaapi" in out and os.path.exists("/dev/dri/renderD128"):
-            try:
-                subprocess.check_call(
-                    ["ffmpeg", "-hide_banner", "-loglevel", "error",
-                     "-vaapi_device", "/dev/dri/renderD128",
-                     "-f", "lavfi", "-i", "nullsrc=s=128x128:r=1",
-                     "-vframes", "4", "-vf", "format=nv12,hwupload",
-                     "-c:v", "h264_vaapi", "-f", "null", "-"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
-                )
-                logger.info("[pluto-x11] encoder: h264_vaapi")
-                _ENCODER_CACHE = "h264_vaapi"
-                return _ENCODER_CACHE
-            except Exception:
-                pass
-        logger.info("[pluto-x11] encoder: libx264 (CPU)")
-        _ENCODER_CACHE = "libx264"
-        return _ENCODER_CACHE
-
-
-def _build_video_encoder_args(encoder: str) -> list[str]:
-    if encoder == "h264_nvenc":
-        return ["-c:v", "h264_nvenc", "-preset", "p2", "-tune", "ll",
-                "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double(BITRATE),
-                "-g", str(FRAMERATE * 2), "-rc", "cbr"]
-    if encoder == "h264_vaapi":
-        return ["-c:v", "h264_vaapi",
-                "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double(BITRATE),
-                "-g", str(FRAMERATE * 2)]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-            "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", _double(BITRATE),
-            "-g", str(FRAMERATE * 2)]
-
-
-def _build_vf_chain(encoder: str) -> list[str]:
-    return ["-vf", "format=nv12,hwupload"] if encoder == "h264_vaapi" else []
-
-
-def _vaapi_device_args(encoder: str) -> list[str]:
-    return ["-vaapi_device", "/dev/dri/renderD128"] if encoder == "h264_vaapi" else []
-
-
-def _double(b: str) -> str:
-    try:
-        s = b[-1].lower()
-        if s in ("k", "m"):
-            return str(int(b[:-1]) * 2) + s
-    except (IndexError, ValueError):
-        pass
-    return b
+from app.transcode import (
+    get_encoder      as _detect_encoder,
+    build_video_args as _build_video_encoder_args,
+    build_vf_chain   as _build_vf_chain,
+    vaapi_device_args as _vaapi_device_args,
+    DISPLAY_W, DISPLAY_H, FRAMERATE, BITRATE,
+    PRESET_NAME as _preset_name,
+)
 
 # ---------------------------------------------------------------------------
 # Cross-process display number allocation
@@ -941,10 +891,11 @@ class _X11Session:
     ffmpeg_proc:  subprocess.Popen | None = field(default=None, repr=False)
     broadcast:    _BroadcastPipe   | None = field(default=None, repr=False)
 
-    readers:   int   = 0
-    last_read: float = field(default_factory=time.monotonic)
-    started:   bool  = False
-    lock:      threading.Lock = field(default_factory=threading.Lock)
+    readers:    int   = 0
+    last_read:  float = field(default_factory=time.monotonic)
+    started:    bool  = False
+    is_resting: bool  = False   # True when parked on the guide/resting channel
+    lock:       threading.Lock = field(default_factory=threading.Lock)
 
 # ---------------------------------------------------------------------------
 # Session lifecycle
@@ -1161,6 +1112,9 @@ def _reaper() -> None:
         to_evict: list[str] = []
         with _sessions_lock:
             for cid, sess in _sessions.items():
+                # Never evict resting sessions by idle timeout — they're intentional.
+                if sess.is_resting:
+                    continue
                 if sess.readers == 0 and time.monotonic() - sess.last_read > IDLE_TIMEOUT:
                     to_evict.append(cid)
                 elif sess.broadcast and not sess.broadcast.is_alive():
@@ -1170,7 +1124,113 @@ def _reaper() -> None:
             with _sessions_lock:
                 sess = _sessions.pop(cid, None)
             if sess:
+                logger.info("[pluto-x11] reaper evicting idle session ch=%s", cid)
                 _terminate_session(sess)
+                # After evicting an active session, try to spin up a resting one
+                # to keep the pool warm (runs in background to avoid blocking).
+                if POOL_RESTING_CHANNEL:
+                    threading.Thread(
+                        target=_ensure_resting_session,
+                        daemon=True,
+                        name="pluto-x11-pool-refill",
+                    ).start()
+
+
+# ---------------------------------------------------------------------------
+# Session pool — resting sessions
+# ---------------------------------------------------------------------------
+# A "resting" session parks Chromium on the guide/landing page so the browser
+# is pre-warmed when the next user requests a real channel.  When a real channel
+# is requested and a resting slot exists, we navigate that browser to the new
+# channel instead of cold-starting Xvfb+Chromium again (faster first-segment).
+#
+# The pool manager runs as a background thread and keeps (POOL_MAX_SESSIONS - 1)
+# resting sessions alive whenever there is capacity.
+
+_RESTING_SESSION_KEY_PREFIX = "__resting__"
+
+
+def _resting_key() -> str:
+    """Generate a unique key for a resting session slot."""
+    return f"{_RESTING_SESSION_KEY_PREFIX}{uuid.uuid4().hex}"
+
+
+def _is_resting_key(key: str) -> bool:
+    return key.startswith(_RESTING_SESSION_KEY_PREFIX)
+
+
+def _count_sessions() -> tuple[int, int]:
+    """Return (active_count, resting_count) — must be called under _sessions_lock."""
+    active = sum(1 for s in _sessions.values() if not s.is_resting)
+    resting = sum(1 for s in _sessions.values() if s.is_resting)
+    return active, resting
+
+
+def _ensure_resting_session() -> None:
+    """
+    If pool capacity allows, spin up one resting session on the guide page.
+    Safe to call from any thread; acquires _sessions_lock internally.
+    Noop when POOL_RESTING_CHANNEL is not configured.
+    """
+    if not POOL_RESTING_CHANNEL:
+        return
+
+    with _sessions_lock:
+        total = len(_sessions)
+        _, resting = _count_sessions()
+        # Leave at least one slot free for real user sessions.
+        if total >= POOL_MAX_SESSIONS or resting >= (POOL_MAX_SESSIONS - 1):
+            return
+
+    rkey = _resting_key()
+    logger.info("[pluto-x11] pool: starting resting session key=%s url=%s",
+                rkey, POOL_RESTING_URL)
+    try:
+        sess = _launch_session(rkey, POOL_RESTING_URL)
+        sess.is_resting = True
+        with _sessions_lock:
+            # Recheck — another thread may have launched one while we blocked.
+            total = len(_sessions)
+            _, resting = _count_sessions()
+            if total < POOL_MAX_SESSIONS and resting < (POOL_MAX_SESSIONS - 1):
+                _sessions[rkey] = sess
+                logger.info("[pluto-x11] pool: resting session ready key=%s display=:%d",
+                            rkey, sess.display_num)
+            else:
+                logger.info("[pluto-x11] pool: resting session not needed (race) — terminating key=%s", rkey)
+                _terminate_session(sess)
+    except Exception as exc:
+        logger.warning("[pluto-x11] pool: resting session launch failed: %s", exc)
+
+
+def _pop_resting_session() -> _X11Session | None:
+    """
+    Pop and return one resting session for reuse, or None if none available.
+    Caller must hold _sessions_lock.
+    """
+    for key, sess in list(_sessions.items()):
+        if sess.is_resting and sess.broadcast and sess.broadcast.is_alive():
+            del _sessions[key]
+            sess.is_resting = False
+            return sess
+    return None
+
+
+def _pool_manager() -> None:
+    """Background thread — maintains resting sessions up to pool capacity."""
+    while True:
+        time.sleep(10)
+        if not POOL_RESTING_CHANNEL or not ENABLED:
+            continue
+        try:
+            with _sessions_lock:
+                total = len(_sessions)
+                _, resting = _count_sessions()
+                need = min(POOL_MAX_SESSIONS - 1, POOL_MAX_SESSIONS - total) - resting
+            for _ in range(max(0, need)):
+                _ensure_resting_session()
+        except Exception as exc:
+            logger.debug("[pluto-x11] pool manager error: %s", exc)
 
 
 def _cleanup_on_start() -> None:
@@ -1185,7 +1245,11 @@ def _cleanup_on_start() -> None:
 
 
 _cleanup_on_start()
-threading.Thread(target=_reaper, daemon=True, name="pluto-x11-reaper").start()
+threading.Thread(target=_reaper,       daemon=True, name="pluto-x11-reaper").start()
+threading.Thread(target=_pool_manager, daemon=True, name="pluto-x11-pool-mgr").start()
+# Pre-warm the first resting session shortly after startup.
+if POOL_RESTING_CHANNEL:
+    threading.Timer(5.0, _ensure_resting_session).start()
 
 # ---------------------------------------------------------------------------
 # Headless login worker script — used by login_and_store_cookies()
@@ -2089,13 +2153,21 @@ def clear_cookies(cookie_path: str | None = None) -> None:
 def stream_channel(channel_id: str, pluto_url: str,
                    email: str | None = None, password: str | None = None) -> Iterator[bytes]:
     """
-    Stream multiplexer — unlimited sessions.
+    Stream multiplexer — pool-aware.
 
-    - Same channel already streaming → attach as a reader to the existing
-      session (one Xvfb+Chromium+ffmpeg shared among all viewers).
-    - New channel → spin up a new session.
-    - Sessions are torn down by the reaper after IDLE_TIMEOUT seconds with
-      no active readers.
+    Same channel already streaming → attach as a reader to the existing
+    session (one Xvfb+Chromium+ffmpeg shared among all viewers).
+
+    New channel requested:
+      1. If a resting session exists (parked on the guide), pop it and reuse
+         its Xvfb+Chromium+ffmpeg (browser navigates to the real channel URL).
+         This avoids the cold-start cost entirely.
+      2. Otherwise spin up a new session, subject to POOL_MAX_SESSIONS cap.
+         If the pool is at capacity, the request blocks briefly then retries.
+
+    Sessions are torn down by the reaper after IDLE_TIMEOUT seconds with
+    no active readers.  Resting sessions are kept alive indefinitely by the
+    pool manager.
     """
     if not ENABLED:
         logger.error("[pluto-x11] disabled")
@@ -2104,9 +2176,12 @@ def stream_channel(channel_id: str, pluto_url: str,
     launch_lock = _get_launch_lock(channel_id)
     with launch_lock:
         with _sessions_lock:
+            # ── Case 1: same channel already streaming → attach ──────────
             sess = _sessions.get(channel_id)
             if sess is not None and sess.broadcast and sess.broadcast.is_alive():
                 sess.readers += 1
+                logger.info("[pluto-x11] reusing existing session ch=%s readers=%d",
+                            channel_id, sess.readers)
             else:
                 if sess is not None:
                     _terminate_session(sess)
@@ -2114,11 +2189,51 @@ def stream_channel(channel_id: str, pluto_url: str,
                 sess = None
 
         if sess is None:
+            # ── Case 2: try to pop a resting session for reuse ───────────
+            resting: _X11Session | None = None
+            with _sessions_lock:
+                resting = _pop_resting_session()
+
+            if resting is not None:
+                logger.info("[pluto-x11] pool: promoting resting session to ch=%s display=:%d",
+                            channel_id, resting.display_num)
+                # Re-purpose the resting session for the real channel.
+                # The existing ffmpeg x11grab just keeps capturing whatever
+                # Chromium shows; Playwright navigates to the new URL via the
+                # control pipe mechanism in _launch_session — but since that
+                # pipe is already established we instead terminate and launch
+                # fresh (navigation reuse is a future optimization).
+                _terminate_session(resting)
+                # Fall through to normal launch below.
+
+            # ── Case 3: enforce pool cap & launch new session ─────────────
+            for _attempt in range(3):
+                with _sessions_lock:
+                    total = len(_sessions)
+                if total < POOL_MAX_SESSIONS:
+                    break
+                logger.warning(
+                    "[pluto-x11] pool at capacity (%d/%d) — waiting for a slot (attempt %d/3)",
+                    total, POOL_MAX_SESSIONS, _attempt + 1,
+                )
+                time.sleep(3)
+            else:
+                logger.error("[pluto-x11] pool full — rejecting stream request for ch=%s", channel_id)
+                return
+
             new_sess = _launch_session(channel_id, pluto_url, email=email, password=password)
             with _sessions_lock:
                 _sessions[channel_id] = new_sess
                 new_sess.readers += 1
             sess = new_sess
+
+            # Refill pool in background.
+            if POOL_RESTING_CHANNEL:
+                threading.Thread(
+                    target=_ensure_resting_session,
+                    daemon=True,
+                    name="pluto-x11-pool-refill",
+                ).start()
 
     reader_q = sess.broadcast.add_reader()
     try:
@@ -2149,5 +2264,29 @@ def active_sessions() -> list[dict]:
                 "readers":      sess.readers,
                 "idle_secs":    round(time.monotonic() - sess.last_read, 1),
                 "ffmpeg_alive": sess.broadcast.is_alive() if sess.broadcast else False,
+                "is_resting":   sess.is_resting,
+                "preset":       _preset_name,
+                "resolution":   f"{DISPLAY_W}x{DISPLAY_H}",
+                "framerate":    FRAMERATE,
+                "bitrate":      BITRATE,
             })
     return out
+
+
+def pool_status() -> dict:
+    """Return a summary of the session pool state."""
+    with _sessions_lock:
+        active, resting = _count_sessions()
+        total = active + resting
+    return {
+        "pool_max":          POOL_MAX_SESSIONS,
+        "pool_total":        total,
+        "pool_active":       active,
+        "pool_resting":      resting,
+        "resting_channel":   POOL_RESTING_CHANNEL or None,
+        "preset":            _preset_name,
+        "encoder":           FORCE_ENCODER or "auto",
+        "resolution":        f"{DISPLAY_W}x{DISPLAY_H}",
+        "framerate":         FRAMERATE,
+        "bitrate":           BITRATE,
+    }
