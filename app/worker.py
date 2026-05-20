@@ -1597,6 +1597,8 @@ def _upsert_channels(source, channel_data_list, gracenote_auto_fill: bool = True
             # to Auto, so scraper/helper data only fills gaps on auto rows.
             if mode == 'auto' and gracenote_id is not None and gracenote_auto_fill:
                 ch.gracenote_id = gracenote_id
+            elif mode == 'auto' and source.name == 'tvapp2' and (source.config or {}).get('epg_url'):
+                ch.gracenote_id = None
         else:
             db.session.add(Channel(
                 source_id         = source.id,
