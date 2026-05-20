@@ -837,6 +837,13 @@ def generate_gracenote_m3u(filters: dict = None, base_url: str = None,
 
 
 def _tvg_id(ch) -> str:
+    # When a channel has a guide_key (e.g. tvapp2 numeric station ID like
+    # "10179"), use it verbatim as the tvg-id so that M3U, XMLTV channel
+    # blocks, and programme elements all reference the same ID that the
+    # external EPG feed uses in its <channel id="10179"> entries.
+    # For all other channels fall back to the "source.source_channel_id" form.
+    if ch.guide_key:
+        return ch.guide_key
     return f'{ch.source.name}.{ch.source_channel_id}'
 
 
