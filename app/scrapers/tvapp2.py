@@ -86,6 +86,13 @@ def _extract_tvg_prefix(tvg_id: str) -> str | None:
     return prefix or None
 
 
+def _source_base_id(source_channel_id: str) -> str | None:
+    if not source_channel_id or '.' not in source_channel_id:
+        return None
+    base_id = source_channel_id.rsplit('.', 1)[0].strip()
+    return base_id or None
+
+
 def _parse_xmltv_time(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -303,7 +310,7 @@ class TVApp2Scraper(BaseScraper):
                 country           = 'US',
                 stream_type       = 'hls',
                 gracenote_id      = gracenote_id,
-                guide_key         = tvg_id or base_id,
+                guide_key         = _extract_gracenote_id(tvg_id) or _extract_tvg_prefix(tvg_id) or tvg_id or base_id,
                 tags              = [group] if group else [],
             ))
 
@@ -339,6 +346,9 @@ class TVApp2Scraper(BaseScraper):
                 f'tvapp2.{source_channel_id}',
                 ch.name,
             }
+            base_id = _source_base_id(source_channel_id)
+            if base_id:
+                candidates.add(base_id)
             if guide_key:
                 candidates.add(guide_key)
                 prefix = _extract_tvg_prefix(guide_key)
