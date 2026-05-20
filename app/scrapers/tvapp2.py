@@ -79,6 +79,24 @@ def _extract_gracenote_id(tvg_id: str) -> str | None:
     return None
 
 
+def _extract_tvguide_id(value: str) -> str | None:
+    """
+    Extract the numeric TVGuide/Gracenote station ID from tvapp2 identifiers.
+
+    Handles both raw tvapp2 tvg-id values like "10179.206ESPN" and generated
+    PlaylistManager ids like "tvapp2.10179.206ESPN.tvapp2.sports".
+    """
+    if not value:
+        return None
+    parts = [part.strip() for part in value.split('.') if part.strip()]
+    if parts and parts[0].casefold() == 'tvapp2':
+        parts = parts[1:]
+    for part in parts:
+        if part.isdigit() and len(part) >= 4:
+            return part
+    return None
+
+
 def _extract_tvg_prefix(tvg_id: str) -> str | None:
     if not tvg_id or '.' not in tvg_id:
         return None
@@ -310,7 +328,7 @@ class TVApp2Scraper(BaseScraper):
                 country           = 'US',
                 stream_type       = 'hls',
                 gracenote_id      = gracenote_id,
-                guide_key         = _extract_gracenote_id(tvg_id) or _extract_tvg_prefix(tvg_id) or tvg_id or base_id,
+                guide_key         = _extract_tvguide_id(tvg_id) or tvg_id or base_id,
                 tags              = [group] if group else [],
             ))
 
@@ -349,8 +367,20 @@ class TVApp2Scraper(BaseScraper):
             base_id = _source_base_id(source_channel_id)
             if base_id:
                 candidates.add(base_id)
+                tvguide_id = _extract_tvguide_id(base_id)
+                if tvguide_id:
+                    candidates.add(tvguide_id)
+            tvguide_id = _extract_tvguide_id(source_channel_id)
+            if tvguide_id:
+                candidates.add(tvguide_id)
+            tvguide_id = _extract_tvguide_id(f'tvapp2.{source_channel_id}')
+            if tvguide_id:
+                candidates.add(tvguide_id)
             if guide_key:
                 candidates.add(guide_key)
+                tvguide_id = _extract_tvguide_id(guide_key)
+                if tvguide_id:
+                    candidates.add(tvguide_id)
                 prefix = _extract_tvg_prefix(guide_key)
                 if prefix:
                     candidates.add(prefix)
