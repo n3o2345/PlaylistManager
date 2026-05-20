@@ -1595,10 +1595,15 @@ def _upsert_channels(source, channel_data_list, gracenote_auto_fill: bool = True
             mode = (getattr(ch, 'gracenote_mode', None) or ('manual' if getattr(ch, 'gracenote_locked', False) else 'auto')).strip().lower()
             # Manual/Off modes are authoritative until the user switches back
             # to Auto, so scraper/helper data only fills gaps on auto rows.
-            if mode == 'auto' and gracenote_id is not None and gracenote_auto_fill:
-                ch.gracenote_id = gracenote_id
-            elif mode == 'auto' and source.name == 'tvapp2' and (source.config or {}).get('epg_url'):
+            if mode == 'auto' and source.name == 'tvapp2' and (source.config or {}).get('epg_url'):
+                # epg_url is active — unconditionally clear any stale gracenote_id
+                # so this channel lands in the XMLTV-backed partition (gracenote=False).
+                # Without this, channels that had a gracenote_id before epg_url was
+                # configured stay in the Gracenote M3U and Dispatcharr never sees
+                # their programmes from the URL EPG feed.
                 ch.gracenote_id = None
+            elif mode == 'auto' and gracenote_id is not None and gracenote_auto_fill:
+                ch.gracenote_id = gracenote_id
         else:
             db.session.add(Channel(
                 source_id         = source.id,
