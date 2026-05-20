@@ -79,6 +79,13 @@ def _extract_gracenote_id(tvg_id: str) -> str | None:
     return None
 
 
+def _extract_tvg_prefix(tvg_id: str) -> str | None:
+    if not tvg_id or '.' not in tvg_id:
+        return None
+    prefix = tvg_id.split('.', 1)[0].strip()
+    return prefix or None
+
+
 def _parse_xmltv_time(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -113,6 +120,52 @@ def _parse_xmltv_time(value: str | None) -> datetime | None:
             pass
 
     return dt.replace(tzinfo=timezone.utc)
+
+
+def _xmltv_channel_aliases(channel_el: ET.Element) -> set[str]:
+    aliases: set[str] = set()
+    for key in (
+        'id',
+        'tvg-id',
+        'tvgid',
+        'tvg_id',
+        'xmltv-id',
+        'xmltv_id',
+        'channel-id',
+        'channel_id',
+    ):
+        value = (channel_el.get(key) or '').strip()
+        if value:
+            aliases.add(value)
+
+    for child in channel_el:
+        tag = child.tag.rsplit('}', 1)[-1].lower()
+        if tag not in {'display-name', 'display_name', 'name'}:
+            continue
+        value = (child.text or '').strip()
+        if value:
+            aliases.add(value)
+    return aliases
+
+
+def _parse_xmltv_content(content: bytes) -> ET.Element:
+    try:
+        return ET.fromstring(content)
+    except ET.ParseError:
+        text = content.decode('utf-8-sig', errors='replace')
+        repaired_lines = []
+        seen_root = False
+        removed_roots = 0
+        for line in text.splitlines(keepends=True):
+            if re.match(r'^\s*<tv[^>]*>\s*$', line):
+                if seen_root:
+                    removed_roots += 1
+                    continue
+                seen_root = True
+            repaired_lines.append(line)
+        if not seen_root or not removed_roots:
+            raise
+        return ET.fromstring(''.join(repaired_lines).encode('utf-8'))
 
 
 _GROUP_MAP = {
@@ -288,16 +341,33 @@ class TVApp2Scraper(BaseScraper):
             }
             if guide_key:
                 candidates.add(guide_key)
+                prefix = _extract_tvg_prefix(guide_key)
+                if prefix:
+                    candidates.add(prefix)
                 if source_channel_id.startswith(f'{guide_key}.'):
                     candidates.add(guide_key)
             for candidate in candidates:
                 if candidate:
                     channel_targets[candidate.casefold()] = source_channel_id
 
+        xml_channel_targets: dict[str, str] = {}
+        for channel_el in root.iter('channel'):
+            xml_channel_id = (channel_el.get('id') or '').strip()
+            if not xml_channel_id:
+                continue
+            for alias in _xmltv_channel_aliases(channel_el):
+                source_channel_id = channel_targets.get(alias.casefold())
+                if source_channel_id:
+                    xml_channel_targets[xml_channel_id.casefold()] = source_channel_id
+                    break
+
         programs: list[ProgramData] = []
         for prog in root.iter('programme'):
             xml_channel = (prog.get('channel') or '').strip()
-            source_channel_id = channel_targets.get(xml_channel.casefold())
+            source_channel_id = (
+                channel_targets.get(xml_channel.casefold())
+                or xml_channel_targets.get(xml_channel.casefold())
+            )
             if not source_channel_id:
                 continue
 
@@ -335,8 +405,8 @@ class TVApp2Scraper(BaseScraper):
         content = r.content
         if url.lower().split('?', 1)[0].endswith('.gz') or content[:2] == b'\x1f\x8b':
             with gzip.GzipFile(fileobj=io.BytesIO(content)) as gz:
-                return ET.parse(gz).getroot()
-        return ET.fromstring(content)
+                content = gz.read()
+        return _parse_xmltv_content(content)
 
     def resolve(self, raw_url: str) -> str:
         # raw_url is the unwrapped upstream URL stored at scrape time.
