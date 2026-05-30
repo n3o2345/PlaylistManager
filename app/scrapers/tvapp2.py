@@ -159,6 +159,25 @@ def _xmltv_channel_aliases(channel_el: ET.Element) -> set[str]:
     return aliases
 
 
+def _xmltv_match_key(value: str | None) -> str:
+    raw = (value or '').strip()
+    raw = re.sub(r'\([^)]*\)', ' ', raw)
+    raw = re.sub(r'[^a-zA-Z0-9]+', ' ', raw).casefold()
+    words = [
+        part for part in raw.split()
+        if part not in {'channel', 'tv', 'network', 'hd', 'uhd', '4k', 'live', 'tvapp', 'tvpass'}
+        and not part.isdigit()
+    ]
+    compact = ''.join(words)
+    if compact.endswith('tvhd'):
+        compact = compact[:-4]
+    elif compact.endswith('hd'):
+        compact = compact[:-2]
+    elif compact.endswith('tv'):
+        compact = compact[:-2]
+    return compact
+
+
 def _parse_xmltv_content(content: bytes) -> ET.Element:
     try:
         return ET.fromstring(content)
@@ -334,6 +353,7 @@ class TVApp2Scraper(BaseScraper):
             return []
 
         channel_targets: dict[str, str] = {}
+        normalized_channel_targets: dict[str, str] = {}
         for ch in channels:
             source_channel_id = ch.source_channel_id
             guide_key = (getattr(ch, 'guide_key', None) or '').strip()
@@ -367,16 +387,25 @@ class TVApp2Scraper(BaseScraper):
             for candidate in candidates:
                 if candidate:
                     channel_targets[candidate.casefold()] = source_channel_id
+                    normalized = _xmltv_match_key(candidate)
+                    if normalized:
+                        normalized_channel_targets.setdefault(normalized, source_channel_id)
 
         xml_channel_targets: dict[str, str] = {}
+        normalized_xml_channel_targets: dict[str, str] = {}
         for channel_el in root.iter('channel'):
             xml_channel_id = (channel_el.get('id') or '').strip()
             if not xml_channel_id:
                 continue
             for alias in _xmltv_channel_aliases(channel_el):
                 source_channel_id = channel_targets.get(alias.casefold())
+                if not source_channel_id:
+                    source_channel_id = normalized_channel_targets.get(_xmltv_match_key(alias))
                 if source_channel_id:
                     xml_channel_targets[xml_channel_id.casefold()] = source_channel_id
+                    normalized = _xmltv_match_key(xml_channel_id)
+                    if normalized:
+                        normalized_xml_channel_targets[normalized] = source_channel_id
                     break
 
         programs: list[ProgramData] = []
@@ -385,6 +414,8 @@ class TVApp2Scraper(BaseScraper):
             source_channel_id = (
                 channel_targets.get(xml_channel.casefold())
                 or xml_channel_targets.get(xml_channel.casefold())
+                or normalized_channel_targets.get(_xmltv_match_key(xml_channel))
+                or normalized_xml_channel_targets.get(_xmltv_match_key(xml_channel))
             )
             if not source_channel_id:
                 continue

@@ -216,12 +216,21 @@ def _guide_match_key(value: str | None) -> str:
     s = unicodedata.normalize('NFKD', value or '')
     s = ''.join(ch for ch in s if not unicodedata.combining(ch))
     s = s.casefold().replace('&', ' and ')
+    s = re.sub(r'\([^)]*\)', ' ', s)
     s = re.sub(r'[^a-z0-9]+', ' ', s)
     words = [
         w for w in s.split()
-        if w not in {'channel', 'tv', 'network', 'hd', 'uhd', '4k', 'live'}
+        if w not in {'channel', 'tv', 'network', 'hd', 'uhd', '4k', 'live', 'tvapp', 'tvpass'}
     ]
-    return ' '.join(words).strip()
+    cleaned = ' '.join(words).strip()
+    compact = ''.join(words)
+    if compact.endswith('tvhd'):
+        compact = compact[:-4]
+    elif compact.endswith('hd'):
+        compact = compact[:-2]
+    elif compact.endswith('tv'):
+        compact = compact[:-2]
+    return compact or cleaned
 
 
 def _score_guide_station(channel_name: str, station: dict) -> int:
@@ -239,7 +248,7 @@ def _score_guide_station(channel_name: str, station: dict) -> int:
         return 100
     score = 0
     if name_key in station_key or station_key in name_key:
-        score += 45
+        score += 75
     name_tokens = set(name_key.split())
     station_tokens = set(station_key.split())
     if name_tokens and station_tokens:
