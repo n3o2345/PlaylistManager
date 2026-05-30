@@ -265,10 +265,14 @@ def _score_guide_station(channel_name: str, station: dict) -> int:
     return score
 
 
-def _tvapp2_xml_epg_candidates(source: Source, limit: int = 800) -> list[dict]:
+def _xmltv_url_epg_candidates(source: Source, limit: int = 800) -> list[dict]:
     try:
         from ..scrapers.tvapp2 import xmltv_epg_channel_candidates
-        rows = xmltv_epg_channel_candidates(source.config or {})
+        config = source.config or {}
+        if source.name == 'hdhomerun' and not (config.get('epg_url') or '').strip():
+            tvapp2 = Source.query.filter_by(name='tvapp2').first()
+            config = tvapp2.config or {} if tvapp2 else config
+        rows = xmltv_epg_channel_candidates(config)
     except Exception:
         rows = []
 
@@ -302,8 +306,8 @@ def _tvapp2_xml_epg_candidates(source: Source, limit: int = 800) -> list[dict]:
 
 def _source_epg_candidates(source_id: int, now: datetime, limit: int = 400) -> list[dict]:
     source = db.session.get(Source, source_id)
-    if source and source.name == 'tvapp2':
-        return _tvapp2_xml_epg_candidates(source, limit=limit)
+    if source and source.name in {'tvapp2', 'hdhomerun'}:
+        return _xmltv_url_epg_candidates(source, limit=limit)
 
     rows = (
         db.session.query(

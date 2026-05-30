@@ -273,6 +273,12 @@ class TVApp2Scraper(BaseScraper):
     scrape_interval      = 360       # re-sync every 6 h
     config_required      = False     # no user config needed — hardcoded to localhost
     stream_audit_enabled = True      # auto-disable dead streams
+    phase_timeouts       = {
+        'init':      30,
+        'bootstrap': 60,
+        'channels':  120,
+        'epg':       900,
+    }
 
     config_schema = [
         ConfigField(
@@ -380,6 +386,22 @@ class TVApp2Scraper(BaseScraper):
             logger.info('[tvapp2] no EPG URL configured; skipping guide import')
             return []
 
+        skip_ids = set(kwargs.get('skip_ids') or [])
+        enabled_ids = set(kwargs.get('enabled_ids') or [])
+        active_channels = [
+            ch for ch in channels
+            if ch.source_channel_id not in skip_ids
+            and (not enabled_ids or ch.source_channel_id in enabled_ids)
+        ]
+        total_channels = len(active_channels)
+        if self._progress_cb:
+            self._progress_cb('epg', 0, max(total_channels, 1))
+        if not active_channels:
+            logger.info('[tvapp2] all configured EPG channels are fresh; skipping URL EPG import')
+            if self._progress_cb:
+                self._progress_cb('epg', 1, 1)
+            return []
+
         try:
             root = self._fetch_xmltv(epg_url)
         except Exception as exc:
@@ -388,7 +410,7 @@ class TVApp2Scraper(BaseScraper):
 
         channel_targets: dict[str, str] = {}
         normalized_channel_targets: dict[str, str] = {}
-        for ch in channels:
+        for ch in active_channels:
             source_channel_id = ch.source_channel_id
             guide_key = (getattr(ch, 'guide_key', None) or '').strip()
             candidates = {
@@ -445,7 +467,10 @@ class TVApp2Scraper(BaseScraper):
                     break
 
         programs: list[ProgramData] = []
+        matched_sids: set[str] = set()
+        seen_programs = 0
         for prog in root.iter('programme'):
+            seen_programs += 1
             xml_channel = (prog.get('channel') or '').strip()
             source_channel_id = (
                 channel_targets.get(xml_channel.casefold())
@@ -454,7 +479,13 @@ class TVApp2Scraper(BaseScraper):
                 or normalized_xml_channel_targets.get(_xmltv_match_key(xml_channel))
             )
             if not source_channel_id:
+                if self._progress_cb and seen_programs % 1000 == 0:
+                    self._progress_cb('epg', len(matched_sids), max(total_channels, 1))
                 continue
+            if source_channel_id not in matched_sids:
+                matched_sids.add(source_channel_id)
+                if self._progress_cb:
+                    self._progress_cb('epg', len(matched_sids), max(total_channels, 1))
 
             start = _parse_xmltv_time(prog.get('start'))
             stop = _parse_xmltv_time(prog.get('stop'))
@@ -481,6 +512,8 @@ class TVApp2Scraper(BaseScraper):
                 episode_title     = episode_title,
             ))
 
+        if self._progress_cb:
+            self._progress_cb('epg', total_channels, max(total_channels, 1))
         logger.info('[tvapp2] parsed %d URL EPG programs from %s', len(programs), epg_url)
         return programs
 

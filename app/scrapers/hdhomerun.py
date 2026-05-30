@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import threading
 from typing import Optional
+from urllib.parse import quote, unquote
 
 import requests
 
@@ -58,13 +59,15 @@ class HDHomeRunScraper(BaseScraper):
     config_schema = [
         ConfigField(
             key="hosts",
-            label="Device IP(s)",
+            label="Device IP(s) / URL(s)",
             field_type="text",
             required=False,
-            placeholder="192.168.1.10, 192.168.1.11",
+            placeholder="192.168.1.10, https://hdhr.example.com:5004",
             help_text=(
-                "Comma-separated IPs or hostnames of your HDHomeRun device(s). "
-                "Leave blank to use automatic LAN discovery."
+                "Comma-separated IPs, hostnames, or full base URLs for your "
+                "HDHomeRun device(s). Use a public HTTPS/port-forward/reverse-proxy "
+                "URL for a tuner reachable over WAN. Leave blank to use automatic "
+                "LAN discovery."
             ),
         ),
         ConfigField(
@@ -88,6 +91,18 @@ class HDHomeRunScraper(BaseScraper):
                 "'Full (raw)' bypasses the built-in transcoder for maximum quality."
             ),
         ),
+        ConfigField(
+            key="epg_url",
+            label="XMLTV EPG URL",
+            field_type="text",
+            required=False,
+            placeholder="https://example.com/xmltv.xml.gz",
+            help_text=(
+                "Optional XMLTV feed for guide data. You can use the same XMLTV "
+                "URL configured on TVApp2; channels are matched by guide number, "
+                "channel name, and XMLTV aliases."
+            ),
+        ),
     ]
 
     def __init__(self, config: dict = None):
@@ -103,6 +118,26 @@ class HDHomeRunScraper(BaseScraper):
         self._use_discovery = str(use_disc).strip() not in ("0", "false", "no", "off")
 
         self._quality = (self.config.get("quality") or "hts").strip()
+        self._epg_url = (self.config.get("epg_url") or "").strip()
+
+    @staticmethod
+    def _base_url(host: str) -> str:
+        host = (host or "").strip().rstrip("/")
+        return host if host.startswith(("http://", "https://")) else f"http://{host}"
+
+    @staticmethod
+    def _stream_token(host: str) -> str:
+        return quote((host or "").strip(), safe="")
+
+    def _effective_epg_url(self) -> str:
+        if self._epg_url:
+            return self._epg_url
+        try:
+            from ..models import Source
+            tvapp2 = Source.query.filter_by(name="tvapp2").first()
+            return ((tvapp2.config or {}).get("epg_url") or "").strip() if tvapp2 else ""
+        except Exception:
+            return ""
 
     # ── Device discovery ──────────────────────────────────────────────────────
 
@@ -131,7 +166,7 @@ class HDHomeRunScraper(BaseScraper):
 
     def _device_info(self, host: str) -> Optional[dict]:
         """Fetch /discover.json from a device."""
-        base = host if host.startswith("http") else f"http://{host}"
+        base = self._base_url(host)
         try:
             r = self.session.get(f"{base}{_DEVICE_PATH}", timeout=6)
             r.raise_for_status()
@@ -142,7 +177,7 @@ class HDHomeRunScraper(BaseScraper):
 
     def _fetch_lineup(self, host: str) -> list[dict]:
         """Fetch /lineup.json (the channel list) from a device."""
-        base = host if host.startswith("http") else f"http://{host}"
+        base = self._base_url(host)
         try:
             r = self.session.get(f"{base}{_LINEUP_PATH}", timeout=10)
             r.raise_for_status()
@@ -159,7 +194,6 @@ class HDHomeRunScraper(BaseScraper):
         seen_numbers: set[str] = set()
 
         for host in hosts:
-            base = host if host.startswith("http") else f"http://{host}"
             info = self._device_info(host)
             device_id = (info or {}).get("DeviceID", host)
 
@@ -193,7 +227,7 @@ class HDHomeRunScraper(BaseScraper):
                     continue
 
                 # Store as a virtual URL; resolve() will rewrite it
-                stream_url = f"hdhomerun://{host}/{guide_number}"
+                stream_url = f"hdhomerun://{self._stream_token(host)}/{guide_number}"
 
                 # Best-effort channel number parsing
                 try:
@@ -212,26 +246,32 @@ class HDHomeRunScraper(BaseScraper):
                     language          = "en",
                     country           = "US",
                     number            = ch_num,
+                    guide_key         = guide_number,
                     description       = entry.get("Affiliate") or None,
                 ))
 
             logger.info(
                 "[hdhomerun] %s: %d channels loaded",
                 host,
-                sum(1 for c in all_channels if c.stream_url.startswith(f"hdhomerun://{host}/")),
+                sum(1 for c in all_channels if c.stream_url.startswith(f"hdhomerun://{self._stream_token(host)}/")),
             )
 
         logger.info("[hdhomerun] total %d channels", len(all_channels))
         return all_channels
 
     def fetch_epg(self, channels: list[ChannelData], **kwargs) -> list[ProgramData]:
-        """
-        HDHomeRun devices expose guide data via /lineup_status.json and the
-        Silicondust guide API, but that requires a valid subscription token.
-        We return an empty list here; Gracenote/XMLTV via PlaylistManager's
-        normal EPG pipeline handles guide data for OTA channels.
-        """
-        return []
+        """Import guide data from an optional XMLTV URL."""
+        epg_url = self._effective_epg_url()
+        if not epg_url:
+            return []
+        try:
+            from .tvapp2 import TVApp2Scraper
+            xmltv = TVApp2Scraper({"epg_url": epg_url})
+            xmltv._progress_cb = self._progress_cb
+            return xmltv.fetch_epg(channels, **kwargs)
+        except Exception as exc:
+            logger.warning("[hdhomerun] failed to import XMLTV EPG from %s: %s", epg_url, exc)
+            return []
 
     # ── Stream resolution ─────────────────────────────────────────────────────
 
@@ -250,9 +290,9 @@ class HDHomeRunScraper(BaseScraper):
             logger.error("[hdhomerun] malformed url: %s", raw_url)
             return raw_url
 
-        host         = remainder[:idx]
+        host         = unquote(remainder[:idx])
         guide_number = remainder[idx + 1:]
-        base         = host if host.startswith("http") else f"http://{host}"
+        base         = self._base_url(host)
 
         quality = self._quality
         url = (
