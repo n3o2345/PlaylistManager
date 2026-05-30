@@ -3,16 +3,16 @@
 tvapp2 scraper for PlaylistManager.
 
 tvapp2 is embedded in the same Docker image and always runs on
-http://127.0.0.1:4124 — no user configuration needed.
+http://127.0.0.1:4124. Configure an XMLTV URL to import guide data.
 
 Channels are pulled from /playlist, stream URLs are unwrapped from tvapp2's
 own /channel?url= wrapper so PlaylistManager stores the raw upstream URL.
 PlaylistManager re-wraps at play time and proxies everything server-side.
 
-EPG comes from Gracenote — tvapp2 tvg-ids are "<gracenote_station_id>.<call>"
-(e.g. "111871.571ACC") so the Gracenote station ID is extracted directly and
-stored on the channel, letting supported players use Gracenote guide
-data without any XMLTV feed from tvapp2.
+EPG comes only from the configured XMLTV URL. tvapp2 tvg-ids often include
+numeric Gracenote/TVGuide station IDs, and those IDs are kept as guide lookup
+keys for URL EPG matching instead of being stored as built-in Gracenote guide
+IDs.
 
 Dead streams are auto-disabled via stream_audit_enabled = True.
 """
@@ -28,7 +28,6 @@ from urllib.parse import urlsplit, parse_qs, unquote as _unquote
 from xml.etree import ElementTree as ET
 
 from .base import BaseScraper, ChannelData, ConfigField, ProgramData, infer_language_from_metadata
-from ..gracenote_map import resolve_gracenote
 
 logger = logging.getLogger(__name__)
 
@@ -64,19 +63,6 @@ def _unwrap_channel_url(url: str) -> str:
     except Exception:
         pass
     return url
-
-
-def _extract_gracenote_id(tvg_id: str) -> str | None:
-    """
-    tvapp2 tvg-ids: "<gracenote_station_id>.<call_letters>"
-    e.g. "111871.571ACC" → Gracenote station ID "111871"
-    """
-    if not tvg_id:
-        return None
-    prefix = tvg_id.split('.')[0]
-    if prefix.isdigit() and len(prefix) >= 5:
-        return prefix
-    return None
 
 
 def _extract_tvguide_id(value: str) -> str | None:
@@ -235,7 +221,6 @@ class TVApp2Scraper(BaseScraper):
     config_required      = False     # no user config needed — hardcoded to localhost
     stream_audit_enabled = True      # auto-disable dead streams
 
-    # No config_schema — nothing for the user to fill in
     config_schema = [
         ConfigField(
             'epg_url',
@@ -243,7 +228,7 @@ class TVApp2Scraper(BaseScraper):
             field_type='text',
             required=False,
             placeholder='https://example.com/xmltv.xml.gz',
-            help_text='Optional XMLTV URL for tvapp2 guide data. Supports .xml and .xml.gz feeds.',
+            help_text='XMLTV URL for tvapp2 guide data. Supports .xml and .xml.gz feeds; when empty, tvapp2 imports channels without guide programs.',
         ),
     ]
 
@@ -251,7 +236,6 @@ class TVApp2Scraper(BaseScraper):
         super().__init__(config)
         # Always the embedded instance — ignore any legacy config
         self._base_url = _BASE_URL
-        self._use_url_epg = bool((self.config.get('epg_url') or '').strip())
 
     # ── playlist ──────────────────────────────────────────────────────────────
 
@@ -311,12 +295,6 @@ class TVApp2Scraper(BaseScraper):
                 source_channel_id = f'{source_channel_id}.{n}'
             seen_ids.add(source_channel_id)
 
-            gracenote_id = resolve_gracenote(
-                'tvapp2',
-                upstream_id = _extract_gracenote_id(tvg_id),
-                lookup_key  = base_id,
-            ) if not self._use_url_epg else None
-
             channels.append(ChannelData(
                 source_channel_id = source_channel_id,
                 name              = name,
@@ -327,7 +305,7 @@ class TVApp2Scraper(BaseScraper):
                 language          = infer_language_from_metadata(name, group),
                 country           = 'US',
                 stream_type       = 'hls',
-                gracenote_id      = gracenote_id,
+                gracenote_id      = None,
                 guide_key         = _extract_tvguide_id(tvg_id) or tvg_id or base_id,
                 tags              = [group] if group else [],
             ))
@@ -346,7 +324,7 @@ class TVApp2Scraper(BaseScraper):
     def fetch_epg(self, channels: list[ChannelData], **kwargs) -> list[ProgramData]:
         epg_url = (self.config.get('epg_url') or '').strip()
         if not epg_url:
-            # EPG is sourced from Gracenote via the gracenote_id on each channel.
+            logger.info('[tvapp2] no EPG URL configured; skipping guide import')
             return []
 
         try:
