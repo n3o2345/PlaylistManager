@@ -283,7 +283,6 @@ def _tvapp2_xml_epg_candidates(source: Source, limit: int = 800) -> list[dict]:
         if (
             _has_forbidden_guide_label(name)
             or _has_forbidden_guide_label(guide_key)
-            or _has_forbidden_guide_label(source_channel_id)
         ):
             continue
         stations.append({
@@ -329,7 +328,11 @@ def _source_epg_candidates(source_id: int, now: datetime, limit: int = 400) -> l
     )
     stations = []
     for channel_id, name, source_channel_id, guide_key, gracenote_id, sample_title, sample_subtitle, program_count in rows:
-        if _has_forbidden_guide_label(name) or _has_forbidden_guide_label(guide_key):
+        if (
+            _has_forbidden_guide_label(name)
+            or _has_forbidden_guide_label(guide_key)
+            or _has_forbidden_guide_label(source_channel_id)
+        ):
             continue
         source_guide_key = (guide_key or source_channel_id or '').strip()
         if not source_guide_key and not (gracenote_id or '').strip():
