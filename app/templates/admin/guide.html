@@ -72,6 +72,11 @@
     }
     .match-title { font-weight: 700; }
     .match-detail { color: var(--text-muted); font-size: 0.77rem; margin-top: 0.2rem; line-height: 1.35; }
+    .xmltv-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.7rem; align-items: center; }
+    .xmltv-picker select {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 0.55rem 0.7rem; border-radius: 6px; font-size: 0.86rem; width: 100%;
+    }
     .score { color: var(--accent); font-weight: 750; margin-right: 0.4rem; }
     .empty { text-align: center; color: var(--text-dim); padding: 3.5rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
     .status { color: var(--text-muted); font-size: 0.78rem; min-width: 86px; text-align: right; }
@@ -85,6 +90,7 @@
       .toolbar { grid-template-columns: 1fr; }
       .row-head { grid-template-columns: 1fr; }
       .match-item { grid-template-columns: 1fr; }
+      .xmltv-picker { grid-template-columns: 1fr; }
       .status { text-align: left; }
     }
   </style>
@@ -194,7 +200,30 @@
             <a class="btn" href="/admin/channels?search={{ row.channel.name|urlencode }}&epg=0">Open in Channels</a>
           </div>
           <div class="match-body">
-            {% if row.matches %}
+            {% if row.manual_xmltv %}
+              {% if row.station_options %}
+              <div class="match-item">
+                <div>
+                  <div class="match-title">XMLTV channel</div>
+                  <div class="match-detail">Select the exact guide channel to use for this TVApp2 channel.</div>
+                </div>
+                <div class="xmltv-picker">
+                  <select id="xmltv-select-{{ row.channel.id }}">
+                    <option value="">Choose EPG channel...</option>
+                    {% for m in row.station_options %}
+                    <option value="{{ m.guide_key }}" data-name="{{ m.name }}" data-aliases="{{ (m.aliases or [])|join(', ') }}">{{ m.name or m.guide_key }}{% if m.guide_key and m.guide_key != m.name %} - {{ m.guide_key }}{% endif %}</option>
+                    {% endfor %}
+                  </select>
+                  <div style="display:flex;align-items:center;gap:0.6rem;justify-content:flex-end;flex-wrap:wrap;">
+                    <span class="status" id="status-{{ row.channel.id }}-xmltv"></span>
+                    <button class="btn btn-primary" type="button" onclick="applySelectedXmltvGuide({{ row.channel.id }}, this)">Match</button>
+                  </div>
+                </div>
+              </div>
+              {% else %}
+              <div class="empty" style="padding:1.5rem;">No XMLTV channels are available. Check the TVApp2 EPG URL and run a scrape.</div>
+              {% endif %}
+            {% elif row.matches %}
               {% for m in row.matches %}
               <div class="match-item">
                 <div>
@@ -259,6 +288,20 @@
           status.textContent = String(err.message || err);
         }
       }
+    }
+
+    async function applySelectedXmltvGuide(channelId, btn) {
+      const select = document.getElementById(`xmltv-select-${channelId}`);
+      const guideKey = select ? select.value : '';
+      const status = document.getElementById(`status-${channelId}-xmltv`);
+      if (!guideKey) {
+        if (status) {
+          status.className = 'status error';
+          status.textContent = 'Choose a channel';
+        }
+        return;
+      }
+      await applyGuideMatch(channelId, 'xmltv', guideKey, '', btn);
     }
   </script>
 </body>

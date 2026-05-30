@@ -92,6 +92,18 @@ class HDHomeRunScraper(BaseScraper):
             ),
         ),
         ConfigField(
+            key="request_timeout",
+            label="Request Timeout",
+            field_type="number",
+            required=False,
+            default=20,
+            placeholder="20",
+            help_text=(
+                "Seconds to wait for remote tuner API responses. Increase this "
+                "for WAN/VPN tuners on slower links."
+            ),
+        ),
+        ConfigField(
             key="epg_url",
             label="XMLTV EPG URL",
             field_type="text",
@@ -119,6 +131,10 @@ class HDHomeRunScraper(BaseScraper):
 
         self._quality = (self.config.get("quality") or "hts").strip()
         self._epg_url = (self.config.get("epg_url") or "").strip()
+        try:
+            self._request_timeout = max(3, min(int(self.config.get("request_timeout") or 20), 120))
+        except (TypeError, ValueError):
+            self._request_timeout = 20
 
     @staticmethod
     def _base_url(host: str) -> str:
@@ -168,7 +184,7 @@ class HDHomeRunScraper(BaseScraper):
         """Fetch /discover.json from a device."""
         base = self._base_url(host)
         try:
-            r = self.session.get(f"{base}{_DEVICE_PATH}", timeout=6)
+            r = self.session.get(f"{base}{_DEVICE_PATH}", timeout=self._request_timeout)
             r.raise_for_status()
             return r.json()
         except Exception as exc:
@@ -179,7 +195,7 @@ class HDHomeRunScraper(BaseScraper):
         """Fetch /lineup.json (the channel list) from a device."""
         base = self._base_url(host)
         try:
-            r = self.session.get(f"{base}{_LINEUP_PATH}", timeout=10)
+            r = self.session.get(f"{base}{_LINEUP_PATH}", timeout=self._request_timeout)
             r.raise_for_status()
             return r.json() or []
         except Exception as exc:

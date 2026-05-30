@@ -307,7 +307,7 @@ def _xmltv_url_epg_candidates(source: Source, limit: int = 800) -> list[dict]:
 def _source_epg_candidates(source_id: int, now: datetime, limit: int = 400) -> list[dict]:
     source = db.session.get(Source, source_id)
     if source and source.name in {'tvapp2', 'hdhomerun'}:
-        return _xmltv_url_epg_candidates(source, limit=limit)
+        return _xmltv_url_epg_candidates(source, limit=max(limit, 5000))
 
     rows = (
         db.session.query(
@@ -824,6 +824,14 @@ def guide():
             ch.source_id,
             _source_epg_candidates(ch.source_id, now),
         )
+        if ch.source.name == 'tvapp2':
+            match_rows.append({
+                'channel': ch,
+                'matches': [],
+                'station_options': stations,
+                'manual_xmltv': True,
+            })
+            continue
         ranked = []
         for station in stations:
             if station['channel_id'] == ch.id:
@@ -832,7 +840,12 @@ def guide():
             if score > 0:
                 ranked.append({**station, 'score': score})
         ranked.sort(key=lambda x: (x['score'], x['program_count']), reverse=True)
-        match_rows.append({'channel': ch, 'matches': ranked[:5]})
+        match_rows.append({
+            'channel': ch,
+            'matches': ranked[:5],
+            'station_options': [],
+            'manual_xmltv': False,
+        })
 
     visible_source_ids = {
         s.id for s in sources
