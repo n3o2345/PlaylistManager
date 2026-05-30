@@ -149,7 +149,7 @@
       <div class="stat"><div class="stat-value">{{ stats.guide_channels }}</div><div class="stat-label">Channels in guide window</div></div>
       <div class="stat"><div class="stat-value">{{ stats.guide_programs }}</div><div class="stat-label">Programs shown</div></div>
       <div class="stat"><div class="stat-value">{{ stats.missing_epg }}</div><div class="stat-label">Channels without EPG</div></div>
-      <div class="stat"><div class="stat-value">{{ stats.station_candidates }}</div><div class="stat-label">Guide stations indexed</div></div>
+      <div class="stat"><div class="stat-value">{{ stats.station_candidates }}</div><div class="stat-label">Source EPG candidates</div></div>
     </div>
 
     {% if tab == 'guide' %}
@@ -198,15 +198,15 @@
               {% for m in row.matches %}
               <div class="match-item">
                 <div>
-                  <div class="match-title"><span class="score">{{ m.score }}</span>{{ m.call_sign or 'Station ' ~ m.station_id }} <span class="channel-meta">{{ m.station_id }}</span></div>
+                  <div class="match-title"><span class="score">{{ m.score }}</span>{{ m.name or 'Guide channel' }} <span class="channel-meta">{{ m.guide_key }}</span></div>
                   <div class="match-detail">
                     {{ m.sample_title or 'No sample title' }}{% if m.sample_subtitle %} · {{ m.sample_subtitle }}{% endif %}
-                    {% if m.lineups %}<br>{{ m.lineups|join(', ') }}{% endif %}
+                    <br>Source channel {{ m.source_channel_id }}{% if m.gracenote_id %} · Gracenote {{ m.gracenote_id }}{% endif %}
                   </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:0.6rem;justify-content:flex-end;flex-wrap:wrap;">
-                  <span class="status" id="status-{{ row.channel.id }}-{{ m.station_id }}"></span>
-                  <button class="btn btn-primary" type="button" onclick="applyGuideMatch({{ row.channel.id }}, '{{ m.station_id }}', this)">Match</button>
+                  <span class="status" id="status-{{ row.channel.id }}-{{ m.channel_id }}"></span>
+                  <button class="btn btn-primary" type="button" onclick='applyGuideMatch({{ row.channel.id }}, {{ m.channel_id }}, {{ m.guide_key|tojson }}, {{ m.gracenote_id|tojson }}, this)'>Match</button>
                 </div>
               </div>
               {% endfor %}
@@ -224,8 +224,8 @@
   </div>
 
   <script>
-    async function applyGuideMatch(channelId, stationId, btn) {
-      const status = document.getElementById(`status-${channelId}-${stationId}`);
+    async function applyGuideMatch(channelId, matchChannelId, guideKey, gracenoteId, btn) {
+      const status = document.getElementById(`status-${channelId}-${matchChannelId}`);
       const original = btn.textContent;
       btn.disabled = true;
       btn.textContent = 'Saving...';
@@ -234,10 +234,15 @@
         status.textContent = '';
       }
       try {
+        const body = { guide_key: guideKey || null };
+        if (gracenoteId) {
+          body.gracenote_id = gracenoteId;
+          body.gracenote_mode = 'manual';
+        }
         const resp = await fetch(`/api/channels/${channelId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gracenote_id: stationId, gracenote_mode: 'manual' }),
+          body: JSON.stringify(body),
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);

@@ -6,7 +6,7 @@ import unicodedata
 from flask import Blueprint, jsonify, render_template, request
 from sqlalchemy import select, case
 from ..extensions import db
-from ..models import Source, Channel, Feed, AppSettings, Program, TvtvProgramCache
+from ..models import Source, Channel, Feed, AppSettings, Program
 from ..generators.m3u import (
     _build_channel_query,
     _build_feed_chnum_map,
@@ -227,7 +227,8 @@ def _guide_match_key(value: str | None) -> str:
 def _score_guide_station(channel_name: str, station: dict) -> int:
     name_key = _guide_match_key(channel_name)
     station_bits = ' '.join([
-        station.get('call_sign') or '',
+        station.get('name') or '',
+        station.get('guide_key') or '',
         station.get('sample_title') or '',
         station.get('sample_subtitle') or '',
     ])
@@ -247,35 +248,41 @@ def _score_guide_station(channel_name: str, station: dict) -> int:
     return score
 
 
-def _guide_station_candidates(limit: int = 800) -> list[dict]:
+def _source_epg_candidates(source_id: int, now: datetime, limit: int = 400) -> list[dict]:
     rows = (
         db.session.query(
-            TvtvProgramCache.station_id,
-            db.func.min(TvtvProgramCache.title),
-            db.func.min(TvtvProgramCache.subtitle),
-            db.func.max(TvtvProgramCache.fetched_at),
-            db.func.count(TvtvProgramCache.id),
+            Channel.id,
+            Channel.name,
+            Channel.source_channel_id,
+            Channel.guide_key,
+            Channel.gracenote_id,
+            db.func.min(Program.title),
+            db.func.min(Program.episode_title),
+            db.func.count(Program.id),
         )
-        .filter(TvtvProgramCache.end_time > datetime.now(timezone.utc))
-        .group_by(TvtvProgramCache.station_id)
-        .order_by(db.func.count(TvtvProgramCache.id).desc())
+        .join(Program, Program.channel_id == Channel.id)
+        .filter(
+            Channel.source_id == source_id,
+            Program.end_time > now,
+        )
+        .group_by(Channel.id)
+        .order_by(Channel.name)
         .limit(limit)
         .all()
     )
-    try:
-        from ..tvtv_lookup import get_station_entry
-    except Exception:
-        get_station_entry = None
     stations = []
-    for station_id, sample_title, sample_subtitle, fetched_at, program_count in rows:
-        entry = get_station_entry(str(station_id)) if get_station_entry else None
+    for channel_id, name, source_channel_id, guide_key, gracenote_id, sample_title, sample_subtitle, program_count in rows:
+        source_guide_key = (guide_key or source_channel_id or '').strip()
+        if not source_guide_key and not (gracenote_id or '').strip():
+            continue
         stations.append({
-            'station_id': str(station_id),
-            'call_sign': (entry or {}).get('call_sign') or '',
-            'lineups': (entry or {}).get('lineups') or [],
+            'channel_id': channel_id,
+            'name': name or '',
+            'source_channel_id': source_channel_id or '',
+            'guide_key': source_guide_key,
+            'gracenote_id': gracenote_id or '',
             'sample_title': sample_title or '',
             'sample_subtitle': sample_subtitle or '',
-            'fetched_at': fetched_at,
             'program_count': program_count,
         })
     return stations
@@ -743,22 +750,40 @@ def guide():
         .all()
     )
 
-    stations = _guide_station_candidates()
+    source_epg_candidates: dict[int, list[dict]] = {}
     match_rows = []
     for ch in missing_channels:
+        stations = source_epg_candidates.setdefault(
+            ch.source_id,
+            _source_epg_candidates(ch.source_id, now),
+        )
         ranked = []
         for station in stations:
+            if station['channel_id'] == ch.id:
+                continue
             score = _score_guide_station(ch.name, station)
             if score > 0:
                 ranked.append({**station, 'score': score})
         ranked.sort(key=lambda x: (x['score'], x['program_count']), reverse=True)
         match_rows.append({'channel': ch, 'matches': ranked[:5]})
 
+    visible_source_ids = {
+        s.id for s in sources
+        if not source_filter or s.name == source_filter
+    }
+    for source_id in visible_source_ids:
+        source_epg_candidates.setdefault(source_id, _source_epg_candidates(source_id, now))
+    station_candidate_count = sum(
+        len(items)
+        for source_id, items in source_epg_candidates.items()
+        if source_id in visible_source_ids
+    )
+
     stats = {
         'guide_channels': len(guide_rows),
         'guide_programs': len(programs),
         'missing_epg': missing_q.count(),
-        'station_candidates': len(stations),
+        'station_candidates': station_candidate_count,
     }
 
     return render_template(
