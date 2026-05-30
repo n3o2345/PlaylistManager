@@ -201,12 +201,12 @@
                   <div class="match-title"><span class="score">{{ m.score }}</span>{{ m.name or 'Guide channel' }} <span class="channel-meta">{{ m.guide_key }}</span></div>
                   <div class="match-detail">
                     {{ m.sample_title or 'No sample title' }}{% if m.sample_subtitle %} · {{ m.sample_subtitle }}{% endif %}
-                    <br>Source channel {{ m.source_channel_id }}{% if m.gracenote_id %} · Gracenote {{ m.gracenote_id }}{% endif %}
+                    <br>{{ m.source_channel_id }}{% if m.aliases %} · {{ m.aliases|join(', ') }}{% endif %}{% if m.gracenote_id %} · Gracenote {{ m.gracenote_id }}{% endif %}
                   </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:0.6rem;justify-content:flex-end;flex-wrap:wrap;">
-                  <span class="status" id="status-{{ row.channel.id }}-{{ m.channel_id }}"></span>
-                  <button class="btn btn-primary" type="button" onclick='applyGuideMatch({{ row.channel.id }}, {{ m.channel_id }}, {{ m.guide_key|tojson }}, {{ m.gracenote_id|tojson }}, this)'>Match</button>
+                  <span class="status" id="status-{{ row.channel.id }}-{{ m.match_id }}"></span>
+                  <button class="btn btn-primary" type="button" onclick='applyGuideMatch({{ row.channel.id }}, {{ m.match_id|tojson }}, {{ m.guide_key|tojson }}, {{ m.gracenote_id|tojson }}, this)'>Match</button>
                 </div>
               </div>
               {% endfor %}

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 _BASE_URL   = 'http://127.0.0.1:4124'
 _ATTR_RE    = re.compile(r'(\S+)="([^"]*)"')
 _XMLTV_TS_RE = re.compile(r'^(?P<date>\d{14}|\d{12}|\d{8})(?:\s*(?P<tz>Z|[+-]\d{2}:?\d{2}))?')
+_FORBIDDEN_GUIDE_LABEL_RE = re.compile(r'\((?:tvapp|tvpass|moj)\)', re.I)
 
 
 # ── M3U helpers ───────────────────────────────────────────────────────────────
@@ -159,6 +160,10 @@ def _xmltv_channel_aliases(channel_el: ET.Element) -> set[str]:
     return aliases
 
 
+def _has_forbidden_guide_label(value: str | None) -> bool:
+    return bool(_FORBIDDEN_GUIDE_LABEL_RE.search(value or ''))
+
+
 def _xmltv_match_key(value: str | None) -> str:
     raw = (value or '').strip()
     raw = re.sub(r'\([^)]*\)', ' ', raw)
@@ -196,6 +201,35 @@ def _parse_xmltv_content(content: bytes) -> ET.Element:
         if not seen_root or not removed_roots:
             raise
         return ET.fromstring(''.join(repaired_lines).encode('utf-8'))
+
+
+def xmltv_epg_channel_candidates(config: dict | None) -> list[dict]:
+    """Return guide candidates directly from the configured tvapp2 XMLTV URL."""
+    scraper = TVApp2Scraper(config or {})
+    epg_url = (scraper.config.get('epg_url') or '').strip()
+    if not epg_url:
+        return []
+    root = scraper._fetch_xmltv(epg_url)
+    candidates: list[dict] = []
+    for channel_el in root.iter('channel'):
+        xml_channel_id = (channel_el.get('id') or '').strip()
+        if not xml_channel_id:
+            continue
+        aliases = sorted(
+            alias for alias in _xmltv_channel_aliases(channel_el)
+            if alias and not _has_forbidden_guide_label(alias)
+        )
+        if _has_forbidden_guide_label(xml_channel_id):
+            continue
+        if not aliases:
+            aliases = [xml_channel_id]
+        display_name = next((alias for alias in aliases if alias != xml_channel_id), aliases[0])
+        candidates.append({
+            'guide_key': xml_channel_id,
+            'name': display_name,
+            'aliases': aliases,
+        })
+    return candidates
 
 
 _GROUP_MAP = {
@@ -398,6 +432,8 @@ class TVApp2Scraper(BaseScraper):
             if not xml_channel_id:
                 continue
             for alias in _xmltv_channel_aliases(channel_el):
+                if _has_forbidden_guide_label(alias):
+                    continue
                 source_channel_id = channel_targets.get(alias.casefold())
                 if not source_channel_id:
                     source_channel_id = normalized_channel_targets.get(_xmltv_match_key(alias))

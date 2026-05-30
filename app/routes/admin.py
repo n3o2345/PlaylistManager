@@ -233,11 +233,19 @@ def _guide_match_key(value: str | None) -> str:
     return compact or cleaned
 
 
+_FORBIDDEN_GUIDE_LABEL_RE = re.compile(r'\((?:tvapp|tvpass|moj)\)', re.I)
+
+
+def _has_forbidden_guide_label(value: str | None) -> bool:
+    return bool(_FORBIDDEN_GUIDE_LABEL_RE.search(value or ''))
+
+
 def _score_guide_station(channel_name: str, station: dict) -> int:
     name_key = _guide_match_key(channel_name)
     station_bits = ' '.join([
         station.get('name') or '',
         station.get('guide_key') or '',
+        ' '.join(station.get('aliases') or []),
         station.get('sample_title') or '',
         station.get('sample_subtitle') or '',
     ])
@@ -257,7 +265,47 @@ def _score_guide_station(channel_name: str, station: dict) -> int:
     return score
 
 
+def _tvapp2_xml_epg_candidates(source: Source, limit: int = 800) -> list[dict]:
+    try:
+        from ..scrapers.tvapp2 import xmltv_epg_channel_candidates
+        rows = xmltv_epg_channel_candidates(source.config or {})
+    except Exception:
+        rows = []
+
+    stations = []
+    for idx, row in enumerate(rows[:limit], start=1):
+        name = row.get('name') or ''
+        guide_key = row.get('guide_key') or ''
+        aliases = [
+            alias for alias in (row.get('aliases') or [])
+            if not _has_forbidden_guide_label(alias)
+        ]
+        if (
+            _has_forbidden_guide_label(name)
+            or _has_forbidden_guide_label(guide_key)
+            or _has_forbidden_guide_label(source_channel_id)
+        ):
+            continue
+        stations.append({
+            'match_id': f'xmltv-{idx}',
+            'channel_id': None,
+            'name': name,
+            'source_channel_id': 'XMLTV channel',
+            'guide_key': guide_key,
+            'gracenote_id': '',
+            'aliases': aliases,
+            'sample_title': '',
+            'sample_subtitle': '',
+            'program_count': 0,
+        })
+    return stations
+
+
 def _source_epg_candidates(source_id: int, now: datetime, limit: int = 400) -> list[dict]:
+    source = db.session.get(Source, source_id)
+    if source and source.name == 'tvapp2':
+        return _tvapp2_xml_epg_candidates(source, limit=limit)
+
     rows = (
         db.session.query(
             Channel.id,
@@ -281,10 +329,13 @@ def _source_epg_candidates(source_id: int, now: datetime, limit: int = 400) -> l
     )
     stations = []
     for channel_id, name, source_channel_id, guide_key, gracenote_id, sample_title, sample_subtitle, program_count in rows:
+        if _has_forbidden_guide_label(name) or _has_forbidden_guide_label(guide_key):
+            continue
         source_guide_key = (guide_key or source_channel_id or '').strip()
         if not source_guide_key and not (gracenote_id or '').strip():
             continue
         stations.append({
+            'match_id': str(channel_id),
             'channel_id': channel_id,
             'name': name or '',
             'source_channel_id': source_channel_id or '',
