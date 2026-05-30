@@ -6,7 +6,7 @@ import unicodedata
 from flask import Blueprint, jsonify, render_template, request
 from sqlalchemy import select, case
 from ..extensions import db
-from ..models import Source, Channel, Feed, AppSettings, Program
+from ..models import Source, Channel, Feed, AppSettings, Program, TvtvProgramCache
 from ..generators.m3u import (
     _build_channel_query,
     _build_feed_chnum_map,
@@ -210,6 +210,83 @@ def _feed_split_counts(feed: Feed) -> dict[str, int]:
         'gracenote_count': gn_count,
         'total_count': total,
     }
+
+
+def _guide_match_key(value: str | None) -> str:
+    s = unicodedata.normalize('NFKD', value or '')
+    s = ''.join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.casefold().replace('&', ' and ')
+    s = re.sub(r'[^a-z0-9]+', ' ', s)
+    words = [
+        w for w in s.split()
+        if w not in {'channel', 'tv', 'network', 'hd', 'uhd', '4k', 'live'}
+    ]
+    return ' '.join(words).strip()
+
+
+def _score_guide_station(channel_name: str, station: dict) -> int:
+    name_key = _guide_match_key(channel_name)
+    station_bits = ' '.join([
+        station.get('call_sign') or '',
+        station.get('sample_title') or '',
+        station.get('sample_subtitle') or '',
+    ])
+    station_key = _guide_match_key(station_bits)
+    if not name_key or not station_key:
+        return 0
+    if name_key == station_key:
+        return 100
+    score = 0
+    if name_key in station_key or station_key in name_key:
+        score += 45
+    name_tokens = set(name_key.split())
+    station_tokens = set(station_key.split())
+    if name_tokens and station_tokens:
+        shared = name_tokens & station_tokens
+        score += int((len(shared) / max(len(name_tokens), len(station_tokens))) * 55)
+    return score
+
+
+def _guide_station_candidates(limit: int = 800) -> list[dict]:
+    rows = (
+        db.session.query(
+            TvtvProgramCache.station_id,
+            db.func.min(TvtvProgramCache.title),
+            db.func.min(TvtvProgramCache.subtitle),
+            db.func.max(TvtvProgramCache.fetched_at),
+            db.func.count(TvtvProgramCache.id),
+        )
+        .filter(TvtvProgramCache.end_time > datetime.now(timezone.utc))
+        .group_by(TvtvProgramCache.station_id)
+        .order_by(db.func.count(TvtvProgramCache.id).desc())
+        .limit(limit)
+        .all()
+    )
+    try:
+        from ..tvtv_lookup import get_station_entry
+    except Exception:
+        get_station_entry = None
+    stations = []
+    for station_id, sample_title, sample_subtitle, fetched_at, program_count in rows:
+        entry = get_station_entry(str(station_id)) if get_station_entry else None
+        stations.append({
+            'station_id': str(station_id),
+            'call_sign': (entry or {}).get('call_sign') or '',
+            'lineups': (entry or {}).get('lineups') or [],
+            'sample_title': sample_title or '',
+            'sample_subtitle': sample_subtitle or '',
+            'fetched_at': fetched_at,
+            'program_count': program_count,
+        })
+    return stations
+
+
+def _as_aware_utc(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 @admin_bp.route('/')
@@ -581,6 +658,122 @@ def channels():
                            chnum_conflicts=chnum_conflicts,
                            in_any_feed_ids=in_any_feed_ids,
                            filter_qs=filter_qs)
+
+
+@admin_bp.route('/guide')
+def guide():
+    tab = request.args.get('tab', 'guide')
+    if tab not in ('guide', 'match'):
+        tab = 'guide'
+    hours = max(2, min(request.args.get('hours', 12, type=int) or 12, 48))
+    source_filter = request.args.get('source', '')
+    search = request.args.get('search', '')
+    now = datetime.now(timezone.utc)
+    window_end = now + timedelta(hours=hours)
+
+    sources = Source.query.filter(Source.is_enabled == True).order_by(Source.display_name).all()
+
+    program_q = (
+        Program.query
+        .join(Channel)
+        .join(Source)
+        .filter(
+            Channel.is_active == True,
+            Channel.is_enabled == True,
+            Source.is_enabled == True,
+            Program.end_time > now,
+            Program.start_time < window_end,
+        )
+    )
+    if source_filter:
+        program_q = program_q.filter(Source.name == source_filter)
+    if search:
+        program_q = program_q.filter(Channel.name.ilike(f'%{search}%'))
+    programs = (
+        program_q
+        .order_by(Source.display_name, Channel.name, Program.start_time)
+        .limit(1200)
+        .all()
+    )
+
+    guide_rows = []
+    by_channel: dict[int, dict] = {}
+    for program in programs:
+        start_utc = _as_aware_utc(program.start_time)
+        end_utc = _as_aware_utc(program.end_time)
+        ch = program.channel
+        row = by_channel.setdefault(ch.id, {
+            'channel': ch,
+            'source': ch.source,
+            'programs': [],
+        })
+        row['programs'].append({
+            'program': program,
+            'current': bool(start_utc and end_utc and start_utc <= now < end_utc),
+        })
+    guide_rows = list(by_channel.values())
+
+    has_future_epg = (
+        db.session.query(Program.channel_id)
+        .filter(
+            Program.channel_id == Channel.id,
+            Program.end_time > now,
+        )
+        .exists()
+    )
+    missing_q = (
+        Channel.query
+        .join(Source)
+        .filter(
+            Channel.is_active == True,
+            Channel.is_enabled == True,
+            Source.is_enabled == True,
+            Source.epg_only == False,
+            ~has_future_epg,
+        )
+    )
+    if source_filter:
+        missing_q = missing_q.filter(Source.name == source_filter)
+    if search:
+        missing_q = missing_q.filter(Channel.name.ilike(f'%{search}%'))
+    missing_channels = (
+        missing_q
+        .order_by(Source.display_name, Channel.name)
+        .limit(100)
+        .all()
+    )
+
+    stations = _guide_station_candidates()
+    match_rows = []
+    for ch in missing_channels:
+        ranked = []
+        for station in stations:
+            score = _score_guide_station(ch.name, station)
+            if score > 0:
+                ranked.append({**station, 'score': score})
+        ranked.sort(key=lambda x: (x['score'], x['program_count']), reverse=True)
+        match_rows.append({'channel': ch, 'matches': ranked[:5]})
+
+    stats = {
+        'guide_channels': len(guide_rows),
+        'guide_programs': len(programs),
+        'missing_epg': missing_q.count(),
+        'station_candidates': len(stations),
+    }
+
+    return render_template(
+        'admin/guide.html',
+        tab=tab,
+        hours=hours,
+        sources=sources,
+        source_filter=source_filter,
+        search=search,
+        guide_rows=guide_rows,
+        match_rows=match_rows,
+        stats=stats,
+        now=now,
+        window_end=window_end,
+    )
 
 
 @admin_bp.route('/channels/chnum-map')
