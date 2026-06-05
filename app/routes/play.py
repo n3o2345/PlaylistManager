@@ -37,7 +37,19 @@ logger = logging.getLogger(__name__)
 
 play_bp = Blueprint('play', __name__)
 
-_MANIFEST_PROXY_SOURCES = {'pluto', 'localnow', 'tvapp2'}
+_MANIFEST_PROXY_SOURCES = {'pluto', 'localnow'}
+
+
+def _source_uses_manifest_proxy(source_name: str) -> bool:
+    if source_name in _MANIFEST_PROXY_SOURCES:
+        return True
+    scraper_cls = registry.get(source_name)
+    return bool(scraper_cls and getattr(scraper_cls, 'manifest_proxy_enabled', False))
+
+
+def _source_proxies_segments(source_name: str) -> bool:
+    scraper_cls = registry.get(source_name)
+    return bool(scraper_cls and getattr(scraper_cls, 'proxy_segments', False))
 
 # Pluto SSAI CDN hosts whose segment URLs contain short-lived signed tokens.
 # During ad-break transitions Pluto's stitcher rotates these tokens, so any

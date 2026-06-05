@@ -1,21 +1,5 @@
 # app/scrapers/tvapp2.py
-"""
-tvapp2 scraper for PlaylistManager.
-
-tvapp2 is embedded in the same Docker image and always runs on
-http://127.0.0.1:4124. Configure an XMLTV URL to import guide data.
-
-Channels are pulled from /playlist, stream URLs are unwrapped from tvapp2's
-own /channel?url= wrapper so PlaylistManager stores the raw upstream URL.
-PlaylistManager re-wraps at play time and proxies everything server-side.
-
-EPG comes only from the configured XMLTV URL. tvapp2 tvg-ids often include
-numeric Gracenote/TVGuide station IDs, and those IDs are kept as guide lookup
-keys for URL EPG matching instead of being stored as built-in Gracenote guide
-IDs.
-
-Dead streams are auto-disabled via stream_audit_enabled = True.
-"""
+"""Shared M3U and XMLTV helpers for direct playlist sources."""
 from __future__ import annotations
 
 import gzip
@@ -203,10 +187,12 @@ def _parse_xmltv_content(content: bytes) -> ET.Element:
         return ET.fromstring(''.join(repaired_lines).encode('utf-8'))
 
 
-def xmltv_epg_channel_candidates(config: dict | None) -> list[dict]:
-    """Return guide candidates directly from the configured tvapp2 XMLTV URL."""
-    scraper = TVApp2Scraper(config or {})
-    epg_url = (scraper.config.get('epg_url') or '').strip()
+def xmltv_epg_channel_candidates(config: dict | None, scraper_cls=None) -> list[dict]:
+    """Return guide candidates directly from a configured XMLTV URL."""
+    scraper_cls = scraper_cls or TVApp2Scraper
+    scraper = scraper_cls(config or {})
+    epg_getter = getattr(scraper, '_epg_url', None)
+    epg_url = (epg_getter() if callable(epg_getter) else scraper.config.get('epg_url') or '').strip()
     if not epg_url:
         return []
     root = scraper._fetch_xmltv(epg_url)
@@ -268,8 +254,8 @@ def _normalise_group(group: Optional[str]) -> Optional[str]:
 
 class TVApp2Scraper(BaseScraper):
 
-    source_name          = 'tvapp2'
-    display_name         = 'TVApp2'
+    source_name          = None
+    display_name         = 'Legacy TVApp2 Parser'
     scrape_interval      = 360       # re-sync every 6 h
     config_required      = False     # no user config needed — hardcoded to localhost
     stream_audit_enabled = True      # auto-disable dead streams
@@ -296,6 +282,9 @@ class TVApp2Scraper(BaseScraper):
         # Always the embedded instance — ignore any legacy config
         self._base_url = _BASE_URL
 
+    def _log_name(self) -> str:
+        return self.source_name or 'm3u'
+
     # ── playlist ──────────────────────────────────────────────────────────────
 
     def _fetch_playlist(self) -> Optional[str]:
@@ -305,7 +294,7 @@ class TVApp2Scraper(BaseScraper):
             r.raise_for_status()
             return r.text
         except Exception as e:
-            logger.error('[tvapp2] failed to fetch playlist from %s: %s', url, e)
+            logger.error('[%s] failed to fetch playlist from %s: %s', self._log_name(), url, e)
             return None
 
     def _parse_playlist(self, m3u_text: str) -> list[ChannelData]:
@@ -369,7 +358,7 @@ class TVApp2Scraper(BaseScraper):
                 tags              = [group] if group else [],
             ))
 
-        logger.info('[tvapp2] parsed %d channels', len(channels))
+        logger.info('[%s] parsed %d channels', self._log_name(), len(channels))
         return channels
 
     # ── BaseScraper interface ─────────────────────────────────────────────────
@@ -383,7 +372,7 @@ class TVApp2Scraper(BaseScraper):
     def fetch_epg(self, channels: list[ChannelData], **kwargs) -> list[ProgramData]:
         epg_url = (self.config.get('epg_url') or '').strip()
         if not epg_url:
-            logger.info('[tvapp2] no EPG URL configured; skipping guide import')
+            logger.info('[%s] no EPG URL configured; skipping guide import', self._log_name())
             return []
 
         skip_ids = set(kwargs.get('skip_ids') or [])
@@ -397,7 +386,7 @@ class TVApp2Scraper(BaseScraper):
         if self._progress_cb:
             self._progress_cb('epg', 0, max(total_channels, 1))
         if not active_channels:
-            logger.info('[tvapp2] all configured EPG channels are fresh; skipping URL EPG import')
+            logger.info('[%s] all configured EPG channels are fresh; skipping URL EPG import', self._log_name())
             if self._progress_cb:
                 self._progress_cb('epg', 1, 1)
             return []
@@ -405,7 +394,7 @@ class TVApp2Scraper(BaseScraper):
         try:
             root = self._fetch_xmltv(epg_url)
         except Exception as exc:
-            logger.warning('[tvapp2] failed to fetch URL EPG from %s: %s', epg_url, exc)
+            logger.warning('[%s] failed to fetch URL EPG from %s: %s', self._log_name(), epg_url, exc)
             return []
 
         channel_targets: dict[str, str] = {}
@@ -415,7 +404,7 @@ class TVApp2Scraper(BaseScraper):
             guide_key = (getattr(ch, 'guide_key', None) or '').strip()
             candidates = {
                 source_channel_id,
-                f'tvapp2.{source_channel_id}',
+                f'{self._log_name()}.{source_channel_id}',
                 ch.name,
             }
             base_id = _source_base_id(source_channel_id)
@@ -427,7 +416,7 @@ class TVApp2Scraper(BaseScraper):
             tvguide_id = _extract_tvguide_id(source_channel_id)
             if tvguide_id:
                 candidates.add(tvguide_id)
-            tvguide_id = _extract_tvguide_id(f'tvapp2.{source_channel_id}')
+            tvguide_id = _extract_tvguide_id(f'{self._log_name()}.{source_channel_id}')
             if tvguide_id:
                 candidates.add(tvguide_id)
             if guide_key:
@@ -514,7 +503,7 @@ class TVApp2Scraper(BaseScraper):
 
         if self._progress_cb:
             self._progress_cb('epg', total_channels, max(total_channels, 1))
-        logger.info('[tvapp2] parsed %d URL EPG programs from %s', len(programs), epg_url)
+        logger.info('[%s] parsed %d URL EPG programs from %s', self._log_name(), len(programs), epg_url)
         return programs
 
     def _fetch_xmltv(self, url: str) -> ET.Element:

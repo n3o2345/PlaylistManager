@@ -8,7 +8,14 @@ logger = logging.getLogger(__name__)
 _registry: dict[str, type[BaseScraper]] = {}
 
 
+def _all_subclasses(cls):
+    for subcls in cls.__subclasses__():
+        yield subcls
+        yield from _all_subclasses(subcls)
+
+
 def _discover():
+    _registry.clear()
     scrapers_path = Path(__file__).parent
     for _, module_name, _ in pkgutil.iter_modules([str(scrapers_path)]):
         if module_name in ('base', 'registry'):
@@ -18,7 +25,7 @@ def _discover():
         except Exception as e:
             logger.warning(f'Failed to import scraper {module_name}: {e}')
 
-    for cls in BaseScraper.__subclasses__():
+    for cls in _all_subclasses(BaseScraper):
         if cls.source_name:
             _registry[cls.source_name] = cls
             for alias in getattr(cls, 'source_aliases', ()) or ():

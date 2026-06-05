@@ -1,12 +1,5 @@
 # app/scrapers/tvpass.py
-"""
-Native TVPass scraper.
-
-This bypasses the embedded tvapp2 Node proxy entirely.  Channels are imported
-from TVPass' public M3U playlist and playback URLs are kept as stable
-https://tvpass.org/live/<channel>/<quality> URLs so clients can resolve the
-current CDN redirect themselves.
-"""
+"""Direct M3U/XMLTV playlist scrapers for TVPass-style sources."""
 from __future__ import annotations
 
 import logging
@@ -17,57 +10,77 @@ from .tvapp2 import TVApp2Scraper
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PLAYLIST_URL = 'https://tvpass.org/playlist.m3u'
-_DEFAULT_EPG_URL = 'https://tvpass.org/epg.xml'
+_TVPASS_PLAYLIST_URL = 'https://tvpass.org/playlist/m3u'
+_TVPASS_EPG_URL = 'https://tvpass.org/epg.xml'
 _LIVE_QUALITY_RE = re.compile(r'(/live/[^/?#]+/)(?:sd|hd)(?=([?#]|$))', re.I)
 
 
-class TVPassScraper(TVApp2Scraper):
-    source_name = 'tvpass'
-    source_aliases = ('thetvapp', 'thetvapp_direct', 'tvpass_direct')
-    display_name = 'TVPass Direct'
-    scrape_interval = 360
-    config_required = False
-    stream_audit_enabled = True
-
-    config_schema = [
+def m3u_config_schema(
+    playlist_url: str,
+    epg_url: str = '',
+    *,
+    playlist_help: str = 'M3U playlist URL.',
+    epg_help: str = 'XMLTV guide URL. Leave empty to skip guide import.',
+    include_quality: bool = False,
+    extra_fields: list[ConfigField] | None = None,
+) -> list[ConfigField]:
+    schema = [
         ConfigField(
             'playlist_url',
             'Playlist URL',
             field_type='text',
             required=False,
-            placeholder=_DEFAULT_PLAYLIST_URL,
-            default=_DEFAULT_PLAYLIST_URL,
-            help_text='M3U playlist URL. Defaults to TVPass public playlist.',
+            placeholder=playlist_url,
+            default=playlist_url,
+            help_text=playlist_help,
         ),
         ConfigField(
             'epg_url',
             'EPG URL',
             field_type='text',
             required=False,
-            placeholder=_DEFAULT_EPG_URL,
-            default=_DEFAULT_EPG_URL,
-            help_text='XMLTV guide URL. Leave empty to use the TVPass EPG.',
-        ),
-        ConfigField(
-            'quality',
-            'Stream Quality',
-            field_type='select',
-            required=False,
-            default='hd',
-            options=[
-                {'value': 'hd', 'label': 'HD'},
-                {'value': 'sd', 'label': 'SD'},
-            ],
-            help_text='TVPass live URLs support /hd and /sd variants. HD is the default.',
+            placeholder=epg_url,
+            default=epg_url,
+            help_text=epg_help,
         ),
     ]
+    if include_quality:
+        schema.append(
+            ConfigField(
+                'quality',
+                'Stream Quality',
+                field_type='select',
+                required=False,
+                default='hd',
+                options=[
+                    {'value': 'hd', 'label': 'HD'},
+                    {'value': 'sd', 'label': 'SD'},
+                ],
+                help_text='Live URLs that support /hd and /sd variants will be normalized to this quality.',
+            )
+        )
+    if extra_fields:
+        schema.extend(extra_fields)
+    return schema
+
+
+class DirectM3UScraper(TVApp2Scraper):
+    """Fetch channels from a standalone M3U playlist and optional XMLTV URL."""
+
+    source_name = None
+    display_name = None
+    scrape_interval = 360
+    config_required = False
+    stream_audit_enabled = True
+    default_playlist_url = ''
+    default_epg_url = ''
+    enable_quality = False
 
     def _playlist_url(self) -> str:
-        return (self.config.get('playlist_url') or _DEFAULT_PLAYLIST_URL).strip()
+        return (self.config.get('playlist_url') or self.default_playlist_url).strip()
 
     def _epg_url(self) -> str:
-        return (self.config.get('epg_url') or _DEFAULT_EPG_URL).strip()
+        return (self.config.get('epg_url') or self.default_epg_url).strip()
 
     def _quality(self) -> str:
         quality = (self.config.get('quality') or 'hd').strip().lower()
@@ -75,17 +88,21 @@ class TVPassScraper(TVApp2Scraper):
 
     def _fetch_playlist(self) -> str | None:
         url = self._playlist_url()
+        if not url:
+            logger.error('[%s] no playlist URL configured', self.source_name or 'm3u')
+            return None
         try:
             r = self.session.get(url, timeout=30)
             r.raise_for_status()
             return r.text
         except Exception as e:
-            logger.error('[tvpass] failed to fetch playlist from %s: %s', url, e)
+            logger.error('[%s] failed to fetch playlist from %s: %s', self.source_name or 'm3u', url, e)
             return None
 
     def _apply_quality(self, url: str) -> str:
-        quality = self._quality()
-        return _LIVE_QUALITY_RE.sub(rf'\g<1>{quality}', url)
+        if not self.enable_quality:
+            return url
+        return _LIVE_QUALITY_RE.sub(rf'\g<1>{self._quality()}', url)
 
     def fetch_channels(self):
         m3u_text = self._fetch_playlist()
@@ -95,13 +112,16 @@ class TVPassScraper(TVApp2Scraper):
         channels = self._parse_playlist(m3u_text)
         for ch in channels:
             ch.stream_url = self._apply_quality(ch.stream_url)
-        logger.info('[tvpass] parsed %d channels at %s quality', len(channels), self._quality())
+        if self.enable_quality:
+            logger.info('[%s] parsed %d channels at %s quality', self.source_name, len(channels), self._quality())
+        else:
+            logger.info('[%s] parsed %d channels', self.source_name, len(channels))
         return channels
 
     def fetch_epg(self, channels, **kwargs):
         epg_url = self._epg_url()
         if not epg_url:
-            logger.info('[tvpass] no EPG URL configured; skipping guide import')
+            logger.info('[%s] no EPG URL configured; skipping guide import', self.source_name or 'm3u')
             return []
 
         original = self.config.get('epg_url')
@@ -115,5 +135,100 @@ class TVPassScraper(TVApp2Scraper):
                 self.config['epg_url'] = original
 
     def resolve(self, raw_url: str) -> str:
-        # Return the stable TVPass URL directly; /play will issue a plain 302.
         return self._apply_quality(raw_url)
+
+
+class TVPassScraper(DirectM3UScraper):
+    source_name = 'tvpass'
+    source_aliases = ('tvpass_direct',)
+    display_name = 'TVPass'
+    default_playlist_url = _TVPASS_PLAYLIST_URL
+    default_epg_url = _TVPASS_EPG_URL
+    enable_quality = True
+
+    config_schema = m3u_config_schema(
+        _TVPASS_PLAYLIST_URL,
+        _TVPASS_EPG_URL,
+        playlist_help='M3U playlist URL. Defaults to the TVPass public playlist.',
+        epg_help='XMLTV guide URL. Leave empty to use the TVPass EPG.',
+        include_quality=True,
+    )
+
+
+class TVAppScraper(DirectM3UScraper):
+    source_name = 'tvapp'
+    source_aliases = ('thetvapp', 'thetvapp_direct')
+    display_name = 'TheTVApp'
+    default_playlist_url = 'https://thetvapp-m3u.data-search.workers.dev/playlist'
+    default_epg_url = ''
+    enable_quality = True
+
+    config_schema = m3u_config_schema(
+        default_playlist_url,
+        default_epg_url,
+        playlist_help='M3U playlist URL for TheTVApp. Defaults to the public generated TheTVApp playlist.',
+        epg_help='Optional XMLTV guide URL for TheTVApp. Leave empty to scrape channels only.',
+        include_quality=True,
+    )
+
+
+class MoveOnJoyScraper(DirectM3UScraper):
+    source_name = 'moj'
+    source_aliases = ('moveonjoy',)
+    display_name = 'MoveOnJoy'
+    default_playlist_url = 'https://raw.githubusercontent.com/iptv-org/iptv/refs/heads/master/streams/us_moveonjoy.m3u'
+    default_epg_url = ''
+
+    config_schema = m3u_config_schema(
+        default_playlist_url,
+        default_epg_url,
+        playlist_help='M3U playlist URL for MoveOnJoy. Defaults to the iptv-org MoveOnJoy source playlist.',
+        epg_help='Optional XMLTV guide URL for MoveOnJoy. Leave empty to scrape channels only.',
+    )
+
+
+class DaddyLiveScraper(DirectM3UScraper):
+    source_name = 'daddylive'
+    source_aliases = ('daddy_live', 'dlhd')
+    display_name = 'DaddyLive'
+    default_playlist_url = 'https://raw.githubusercontent.com/pigzillaaaaa/iptv-scraper/refs/heads/main/daddylive-channels.m3u8'
+    default_epg_url = 'https://raw.githubusercontent.com/pigzillaaaaa/iptv-scraper/refs/heads/main/epgs/daddylive-channels-epg.xml'
+    manifest_proxy_enabled = True
+    proxy_segments = True
+
+    config_schema = m3u_config_schema(
+        default_playlist_url,
+        default_epg_url,
+        playlist_help='M3U playlist URL for DaddyLive channels.',
+        epg_help='XMLTV guide URL for DaddyLive channels. Leave empty to scrape channels only.',
+        extra_fields=[
+            ConfigField(
+                'referer',
+                'HTTP Referer',
+                field_type='text',
+                required=False,
+                default='https://daddylivestream.com/',
+                placeholder='https://daddylivestream.com/',
+                help_text='Referer header used when proxying DaddyLive manifests and segments.',
+            ),
+            ConfigField(
+                'origin',
+                'HTTP Origin',
+                field_type='text',
+                required=False,
+                default='https://daddylivestream.com',
+                placeholder='https://daddylivestream.com',
+                help_text='Origin header used when proxying DaddyLive manifests and segments.',
+            ),
+        ],
+    )
+
+    def __init__(self, config: dict = None):
+        super().__init__(config)
+        referer = (self.config.get('referer') or 'https://daddylivestream.com/').strip()
+        origin = (self.config.get('origin') or 'https://daddylivestream.com').strip()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': referer,
+            'Origin': origin,
+        })
