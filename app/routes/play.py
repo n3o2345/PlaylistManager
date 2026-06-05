@@ -670,6 +670,14 @@ def _tvapp2_base_url(channel) -> str:
     return TVApp2Scraper(config=channel.source.config or {})._base_url
 
 
+def _fetch_tvapp2_master(channel) -> tuple[_requests.Response, str]:
+    tvapp2_base = _tvapp2_base_url(channel)
+    tvapp2_url = f'{tvapp2_base}/channel?url={_quote(channel.stream_url, safe="")}'
+    r = _requests.get(tvapp2_url, timeout=15, allow_redirects=True)
+    r.raise_for_status()
+    return r, tvapp2_base
+
+
 @play_bp.route('/play/tvapp2/segment')
 def tvapp2_segment_proxy():
     """Fetch a TS segment via tvapp2 and stream bytes to the client."""
@@ -696,13 +704,12 @@ def tvapp2_segment_proxy():
 
 @play_bp.route('/play/tvapp2/<channel_id>/variant.m3u8')
 def tvapp2_variant_proxy(channel_id: str):
-    """Fetch a variant playlist from tvapp2 and rewrite segment URLs through PlaylistManager."""
+    """Fetch a fresh tvapp2 variant playlist and rewrite segments through PlaylistManager."""
     raw_url = request.args.get('url', '')
-    if not raw_url:
-        abort(400)
-    variant_url = _unquote(raw_url)
-    if not variant_url.startswith(('http://', 'https://')):
-        abort(400)
+    try:
+        index = max(0, int(request.args.get('index') or '0'))
+    except ValueError:
+        index = 0
 
     channel = (
         Channel.query
@@ -710,11 +717,30 @@ def tvapp2_variant_proxy(channel_id: str):
         .filter(Source.name == 'tvapp2', Channel.source_channel_id == _unquote(channel_id))
         .first_or_404()
     )
-    tvapp2_base = _tvapp2_base_url(channel)
     fc_base = request.host_url.rstrip('/')
 
+    if raw_url:
+        # Backward compatibility for clients holding an old master playlist.
+        variant_url = _unquote(raw_url)
+        if not variant_url.startswith(('http://', 'https://')):
+            abort(400)
+        tvapp2_base = _tvapp2_base_url(channel)
+    else:
+        try:
+            master_r, tvapp2_base = _fetch_tvapp2_master(channel)
+            variants = _master_variants(master_r.text, master_r.url)
+            variant_url = variants[min(index, len(variants) - 1)] if variants else master_r.url
+        except Exception as e:
+            logger.warning('[tvapp2-variant] master refresh failed for %s: %s', channel_id, e)
+            trigger_channel_auto_disable(channel.id, 'Dead')
+            failover = _failover_redirect(channel, 'tvapp2 variant master refresh failed')
+            if failover:
+                return failover
+            abort(502)
+
     try:
-        r = _requests.get(variant_url, timeout=15, allow_redirects=True)
+        tvapp2_url = f'{tvapp2_base}/channel?url={_quote(variant_url, safe="")}'
+        r = _requests.get(tvapp2_url, timeout=15, allow_redirects=True)
         r.raise_for_status()
     except Exception as e:
         logger.warning('[tvapp2-variant] fetch failed for %s: %s', variant_url[:80], e)
@@ -749,12 +775,16 @@ def tvapp2_manifest_proxy(channel_id: str):
     Full proxy for tvapp2 channels. Chain:
       client -> PlaylistManager /proxy.m3u8
              -> tvapp2 /channel?url=<raw_stream_url>  (master playlist)
-             -> PlaylistManager /variant.m3u8
+             -> PlaylistManager /variant.m3u8?index=<variant_index>
              -> tvapp2 /channel?url=<variant_url>     (variant playlist)
              -> PlaylistManager /segment
              -> tvapp2 /channel?url=<seg_url>         (TS bytes)
              -> client
     Nothing hits the CDN directly from the client.
+
+    Variant URLs from tvpass/thetvapp can be session-bound.  The master playlist
+    therefore exposes stable variant indexes instead of one-time upstream variant
+    URLs, so every player refresh re-enters tvapp2 and picks up current CDN URLs.
     """
     channel = (
         Channel.query
@@ -763,14 +793,11 @@ def tvapp2_manifest_proxy(channel_id: str):
         .first_or_404()
     )
 
-    tvapp2_base = _tvapp2_base_url(channel)
-    tvapp2_url = f'{tvapp2_base}/channel?url={_quote(channel.stream_url, safe="")}'
     fc_base = request.host_url.rstrip('/')
     encoded_id = _quote(channel.source_channel_id, safe='')
 
     try:
-        r = _requests.get(tvapp2_url, timeout=15, allow_redirects=True)
-        r.raise_for_status()
+        r, tvapp2_base = _fetch_tvapp2_master(channel)
     except Exception as e:
         logger.warning('[tvapp2-proxy] fetch failed for %s: %s', channel_id, e)
         trigger_channel_auto_disable(channel.id, 'Dead')
@@ -784,12 +811,12 @@ def tvapp2_manifest_proxy(channel_id: str):
 
     if '#EXT-X-STREAM-INF' in text:
         lines = []
+        variant_index = 0
         for line in text.splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith('#'):
-                abs_variant = urljoin(effective_url, stripped)
-                line = (f'{fc_base}/play/tvapp2/{encoded_id}/variant.m3u8'
-                        f'?url={_quote(abs_variant, safe="")}')
+                line = f'{fc_base}/play/tvapp2/{encoded_id}/variant.m3u8?index={variant_index}'
+                variant_index += 1
             elif stripped.startswith('#') and 'URI="' in stripped:
                 line = _rewrite_uri_attrs(line, effective_url)
             lines.append(line)
