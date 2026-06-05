@@ -678,6 +678,57 @@ def _fetch_tvapp2_master(channel) -> tuple[_requests.Response, str]:
     return r, tvapp2_base
 
 
+def _tvapp2_playlist_base(response_url: str, upstream_url: str) -> str:
+    """
+    Return the URL relative HLS paths should resolve against.
+
+    tvapp2 proxies playlist bytes through /channel?url=<upstream>.  requests'
+    final URL is therefore often the local /channel endpoint, not the upstream
+    playlist URL that relative variant/segment lines belong to.
+    """
+    try:
+        parsed = urlsplit(response_url)
+        if parsed.path == '/channel':
+            return upstream_url
+    except Exception:
+        pass
+    return response_url or upstream_url
+
+
+def _fetch_tvapp2_variant(channel, index: int) -> tuple[_requests.Response, str, str]:
+    master_r, tvapp2_base = _fetch_tvapp2_master(channel)
+    master_base = _tvapp2_playlist_base(master_r.url, channel.stream_url)
+    variants = _master_variants(master_r.text, master_base)
+    variant_url = variants[min(index, len(variants) - 1)] if variants else master_base
+    tvapp2_url = f'{tvapp2_base}/channel?url={_quote(variant_url, safe="")}'
+    r = _requests.get(tvapp2_url, timeout=15, allow_redirects=True)
+    r.raise_for_status()
+    return r, tvapp2_base, variant_url
+
+
+def _hls_media_sequence(text: str) -> int:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('#EXT-X-MEDIA-SEQUENCE:'):
+            try:
+                return int(stripped.split(':', 1)[1].strip())
+            except ValueError:
+                return 0
+    return 0
+
+
+def _hls_segment_by_sequence(text: str, playlist_url: str, target_seq: int) -> str | None:
+    seq = _hls_media_sequence(text)
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        if seq == target_seq:
+            return urljoin(playlist_url, stripped)
+        seq += 1
+    return None
+
+
 @play_bp.route('/play/tvapp2/segment')
 def tvapp2_segment_proxy():
     """Fetch a TS segment via tvapp2 and stream bytes to the client."""
@@ -699,6 +750,49 @@ def tvapp2_segment_proxy():
         )
     except Exception as e:
         logger.warning('[tvapp2-seg] fetch failed: %s', e)
+        abort(502)
+
+
+@play_bp.route('/play/tvapp2/<channel_id>/segment')
+def tvapp2_stable_segment_proxy(channel_id: str):
+    """Resolve a tvapp2 segment at request time by HLS media sequence."""
+    try:
+        index = max(0, int(request.args.get('index') or '0'))
+        seq = int(request.args.get('seq') or '')
+    except ValueError:
+        abort(400)
+
+    channel = (
+        Channel.query
+        .join(Source)
+        .filter(Source.name == 'tvapp2', Channel.source_channel_id == _unquote(channel_id))
+        .first_or_404()
+    )
+    tvapp2_base = _tvapp2_base_url(channel)
+
+    try:
+        variant_r, tvapp2_base, variant_url = _fetch_tvapp2_variant(channel, index)
+        playlist_url = _tvapp2_playlist_base(variant_r.url, variant_url)
+        seg_url = _hls_segment_by_sequence(variant_r.text, playlist_url, seq)
+        if not seg_url:
+            logger.warning('[tvapp2-seg-stable] seq %s no longer in playlist for %s', seq, channel_id)
+            abort(410)
+
+        proxied = f'{tvapp2_base}/channel?url={_quote(seg_url, safe="")}'
+        r = _requests.get(proxied, timeout=20, stream=True)
+        if r.status_code != 200:
+            logger.warning('[tvapp2-seg-stable] seq %s returned HTTP %s for %s', seq, r.status_code, channel_id)
+            abort(r.status_code)
+        return Response(
+            r.iter_content(65536),
+            status=200,
+            content_type=r.headers.get('Content-Type', 'video/MP2T'),
+            headers={'Cache-Control': 'no-cache'},
+        )
+    except Exception as e:
+        if getattr(e, 'code', None):
+            raise
+        logger.warning('[tvapp2-seg-stable] fetch failed for %s seq=%s: %s', channel_id, seq, e)
         abort(502)
 
 
@@ -725,11 +819,20 @@ def tvapp2_variant_proxy(channel_id: str):
         if not variant_url.startswith(('http://', 'https://')):
             abort(400)
         tvapp2_base = _tvapp2_base_url(channel)
+        try:
+            tvapp2_url = f'{tvapp2_base}/channel?url={_quote(variant_url, safe="")}'
+            r = _requests.get(tvapp2_url, timeout=15, allow_redirects=True)
+            r.raise_for_status()
+        except Exception as e:
+            logger.warning('[tvapp2-variant] fetch failed for %s: %s', variant_url[:80], e)
+            trigger_channel_auto_disable(channel.id, 'Dead')
+            failover = _failover_redirect(channel, 'tvapp2 variant fetch failed')
+            if failover:
+                return failover
+            abort(502)
     else:
         try:
-            master_r, tvapp2_base = _fetch_tvapp2_master(channel)
-            variants = _master_variants(master_r.text, master_r.url)
-            variant_url = variants[min(index, len(variants) - 1)] if variants else master_r.url
+            r, tvapp2_base, variant_url = _fetch_tvapp2_variant(channel, index)
         except Exception as e:
             logger.warning('[tvapp2-variant] master refresh failed for %s: %s', channel_id, e)
             trigger_channel_auto_disable(channel.id, 'Dead')
@@ -738,26 +841,22 @@ def tvapp2_variant_proxy(channel_id: str):
                 return failover
             abort(502)
 
-    try:
-        tvapp2_url = f'{tvapp2_base}/channel?url={_quote(variant_url, safe="")}'
-        r = _requests.get(tvapp2_url, timeout=15, allow_redirects=True)
-        r.raise_for_status()
-    except Exception as e:
-        logger.warning('[tvapp2-variant] fetch failed for %s: %s', variant_url[:80], e)
-        trigger_channel_auto_disable(channel.id, 'Dead')
-        failover = _failover_redirect(channel, 'tvapp2 variant fetch failed')
-        if failover:
-            return failover
-        abort(502)
-
-    effective_url = r.url
+    effective_url = _tvapp2_playlist_base(r.url, variant_url)
+    encoded_id = _quote(channel.source_channel_id, safe='')
+    media_seq = _hls_media_sequence(r.text)
+    segment_index = 0
     lines = []
     for line in r.text.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith('#'):
             abs_seg = urljoin(effective_url, stripped)
-            proxied = f'{tvapp2_base}/channel?url={_quote(abs_seg, safe="")}'
-            line = f'{fc_base}/play/tvapp2/segment?url={_quote(proxied, safe="")}'
+            if raw_url:
+                proxied = f'{tvapp2_base}/channel?url={_quote(abs_seg, safe="")}'
+                line = f'{fc_base}/play/tvapp2/segment?url={_quote(proxied, safe="")}'
+            else:
+                seq = media_seq + segment_index
+                line = f'{fc_base}/play/tvapp2/{encoded_id}/segment?index={index}&seq={seq}'
+            segment_index += 1
         elif stripped.startswith('#') and 'URI="' in stripped:
             line = _rewrite_uri_attrs(line, effective_url)
         lines.append(line)
@@ -777,7 +876,7 @@ def tvapp2_manifest_proxy(channel_id: str):
              -> tvapp2 /channel?url=<raw_stream_url>  (master playlist)
              -> PlaylistManager /variant.m3u8?index=<variant_index>
              -> tvapp2 /channel?url=<variant_url>     (variant playlist)
-             -> PlaylistManager /segment
+             -> PlaylistManager /segment?index=<variant_index>&seq=<media_sequence>
              -> tvapp2 /channel?url=<seg_url>         (TS bytes)
              -> client
     Nothing hits the CDN directly from the client.
@@ -807,7 +906,7 @@ def tvapp2_manifest_proxy(channel_id: str):
         abort(502)
 
     text = r.text
-    effective_url = r.url
+    effective_url = _tvapp2_playlist_base(r.url, channel.stream_url)
 
     if '#EXT-X-STREAM-INF' in text:
         lines = []
@@ -823,13 +922,15 @@ def tvapp2_manifest_proxy(channel_id: str):
         return Response('\n'.join(lines), mimetype='application/vnd.apple.mpegurl',
                         headers=_manifest_cache_headers())
 
+    media_seq = _hls_media_sequence(text)
+    segment_index = 0
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith('#'):
-            abs_seg = urljoin(effective_url, stripped)
-            proxied = f'{tvapp2_base}/channel?url={_quote(abs_seg, safe="")}'
-            line = f'{fc_base}/play/tvapp2/segment?url={_quote(proxied, safe="")}'
+            seq = media_seq + segment_index
+            line = f'{fc_base}/play/tvapp2/{encoded_id}/segment?index=0&seq={seq}'
+            segment_index += 1
         elif stripped.startswith('#') and 'URI="' in stripped:
             line = _rewrite_uri_attrs(line, effective_url)
         lines.append(line)
