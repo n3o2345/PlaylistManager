@@ -117,6 +117,37 @@ def _check_manifest(url: str, session) -> str | None:
     return None
 
 
+def _check_audio(url: str) -> bool:
+    """
+    Returns True if the stream at url has at least one audio track.
+    Returns True on any probe error (fail open — don't kill on network hiccup).
+    Catches sources that serve a silent subscribe/paywalled screen as valid HLS
+    video with no audio track (e.g. TVPass).
+    """
+    import subprocess, json as _json
+    try:
+        result = subprocess.run(
+            [
+                'ffprobe', '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_streams',
+                '-timeout', '8000000',  # 8s in microseconds (libavformat unit)
+                url,
+            ],
+            capture_output=True,
+            timeout=12,
+        )
+        data = _json.loads(result.stdout)
+        streams = data.get('streams', [])
+        has_audio = any(s.get('codec_type') == 'audio' for s in streams)
+        if not has_audio:
+            logger.warning('[play] audio check: no audio track found at %s', url[:80])
+        return has_audio
+    except Exception as e:
+        logger.debug('[play] audio check failed (ignoring): %s', e)
+        return True  # fail open — don't penalise on probe errors
+
+
 @play_bp.route('/play/<source_name>/<channel_id>.m3u')
 def play_vlc(source_name: str, channel_id: str):
     """Return a tiny M3U playlist so VLC (or any media player) can open the stream directly."""
@@ -928,6 +959,21 @@ def play(source_name: str, channel_id: str):
             # health probe; retries just add latency in the background thread.
             s = requests.Session()
             reason = _check_manifest(resolved_url, s)
+            if not reason:
+                # Audio check: catch sources (e.g. TVPass) that serve a silent
+                # subscribe/paywall screen as valid HLS video with no audio track.
+                # If ffprobe finds zero audio streams, treat the channel as Dead
+                # so Dispatcharr failover kicks in on the next request.
+                scraper_cls = registry.get(_source_name)
+                skip_audio_check = bool(
+                    scraper_cls and getattr(scraper_cls, 'skip_audio_check', False)
+                )
+                if not skip_audio_check and not _check_audio(resolved_url):
+                    reason = 'Dead'
+                    logger.warning(
+                        '[play] no audio track detected for %s/%s (%s) — marking Dead for failover',
+                        _source_name, _channel_id, resolved_url[:80],
+                    )
             if not reason:
                 return
             if reason == 'Unauthorized' and _source_name == 'roku':
