@@ -1,5 +1,9 @@
 # app/scrapers/tvapp2.py
-"""Shared M3U and XMLTV helpers for direct playlist sources."""
+"""Shared M3U and XMLTV helpers for direct playlist sources.
+
+NOTE: The tvapp2 source (local proxy at 127.0.0.1:4124) is no longer supported.
+This module is retained as a utility base for M3U/XMLTV parsing used by other scrapers.
+"""
 from __future__ import annotations
 
 import gzip
@@ -8,14 +12,14 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urlsplit, parse_qs, unquote as _unquote
+
 from xml.etree import ElementTree as ET
 
 from .base import BaseScraper, ChannelData, ConfigField, ProgramData, infer_language_from_metadata
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL   = 'http://127.0.0.1:4124'
+
 _ATTR_RE    = re.compile(r'(\S+)="([^"]*)"')
 _XMLTV_TS_RE = re.compile(r'^(?P<date>\d{14}|\d{12}|\d{8})(?:\s*(?P<tz>Z|[+-]\d{2}:?\d{2}))?')
 _FORBIDDEN_GUIDE_LABEL_RE = re.compile(r'\((?:tvapp|tvpass|moj)\)', re.I)
@@ -33,34 +37,20 @@ def _parse_extinf(line: str) -> dict:
     return attrs
 
 
-def _unwrap_channel_url(url: str) -> str:
-    """
-    tvapp2's playlist serves stream lines as:
-        http://127.0.0.1:4124/channel?url=https%3A%2F%2Fthetvapp.to%2F...
-    Extract the inner raw upstream URL so we never store the local proxy address.
-    """
-    try:
-        parsed = urlsplit(url)
-        if parsed.path == '/channel':
-            inner = parse_qs(parsed.query).get('url', [None])[0]
-            if inner:
-                return _unquote(inner)
-    except Exception:
-        pass
-    return url
-
 
 def _extract_tvguide_id(value: str) -> str | None:
     """
-    Extract the numeric TVGuide/Gracenote station ID from tvapp2 identifiers.
+    Extract the numeric TVGuide/Gracenote station ID from M3U tvg-id values.
 
-    Handles both raw tvapp2 tvg-id values like "10179.206ESPN" and generated
-    PlaylistManager ids like "tvapp2.10179.206ESPN.tvapp2.sports".
+    Handles numeric IDs like "10179.206ESPN" and generated PlaylistManager
+    channel IDs like "sourcename.10179.206ESPN.sourcename.sports".
+    Also handles legacy tvapp2-prefixed IDs for backward compatibility.
     """
     if not value:
         return None
     parts = [part.strip() for part in value.split('.') if part.strip()]
-    if parts and parts[0].casefold() == 'tvapp2':
+    # Strip known source-name prefixes (tvapp2 kept for backward compat)
+    if parts and parts[0].casefold() in ('tvapp2', 'tvpass', 'tvapp'):
         parts = parts[1:]
     for part in parts:
         if part.isdigit() and len(part) >= 4:
@@ -253,12 +243,18 @@ def _normalise_group(group: Optional[str]) -> Optional[str]:
 # ── Scraper ───────────────────────────────────────────────────────────────────
 
 class TVApp2Scraper(BaseScraper):
+    """Base class providing M3U and XMLTV parsing utilities for direct playlist sources.
+
+    The original tvapp2 local-proxy source (127.0.0.1:4124) has been removed.
+    This class now serves only as a shared parser base for TVPassScraper, HDHomeRunScraper,
+    and other direct-M3U sources.
+    """
 
     source_name          = None
-    display_name         = 'Legacy TVApp2 Parser'
-    scrape_interval      = 360       # re-sync every 6 h
-    config_required      = False     # no user config needed — hardcoded to localhost
-    stream_audit_enabled = True      # auto-disable dead streams
+    display_name         = 'M3U/XMLTV Parser Base'
+    scrape_interval      = 360
+    config_required      = False
+    stream_audit_enabled = True
     phase_timeouts       = {
         'init':      30,
         'bootstrap': 60,
@@ -273,14 +269,9 @@ class TVApp2Scraper(BaseScraper):
             field_type='text',
             required=False,
             placeholder='https://example.com/xmltv.xml.gz',
-            help_text='XMLTV URL for tvapp2 guide data. Supports .xml and .xml.gz feeds; when empty, tvapp2 imports channels without guide programs.',
+            help_text='XMLTV URL for guide data. Supports .xml and .xml.gz feeds.',
         ),
     ]
-
-    def __init__(self, config: dict = None):
-        super().__init__(config)
-        # Always the embedded instance — ignore any legacy config
-        self._base_url = _BASE_URL
 
     def _log_name(self) -> str:
         return self.source_name or 'm3u'
@@ -288,14 +279,8 @@ class TVApp2Scraper(BaseScraper):
     # ── playlist ──────────────────────────────────────────────────────────────
 
     def _fetch_playlist(self) -> Optional[str]:
-        url = f'{self._base_url}/playlist'
-        try:
-            r = self.session.get(url, timeout=30)
-            r.raise_for_status()
-            return r.text
-        except Exception as e:
-            logger.error('[%s] failed to fetch playlist from %s: %s', self._log_name(), url, e)
-            return None
+        """Subclasses must override to supply M3U text."""
+        raise NotImplementedError('_fetch_playlist must be implemented by subclass')
 
     def _parse_playlist(self, m3u_text: str) -> list[ChannelData]:
         channels: list[ChannelData] = []
@@ -346,7 +331,7 @@ class TVApp2Scraper(BaseScraper):
             channels.append(ChannelData(
                 source_channel_id = source_channel_id,
                 name              = name,
-                stream_url        = _unwrap_channel_url(stream_line),
+                stream_url        = stream_line,
                 logo_url          = logo_url,
                 slug              = source_channel_id,
                 category          = _normalise_group(group),
@@ -516,8 +501,5 @@ class TVApp2Scraper(BaseScraper):
         return _parse_xmltv_content(content)
 
     def resolve(self, raw_url: str) -> str:
-        # raw_url is the unwrapped upstream URL stored at scrape time.
-        # play.py's tvapp2_manifest_proxy wraps it in /channel?url= and
-        # proxies it server-side — this method is not called in the proxy path
-        # but must return a valid URL so play() routes correctly.
+        # Default passthrough — subclasses override to apply quality variants etc.
         return raw_url

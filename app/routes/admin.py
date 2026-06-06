@@ -269,9 +269,6 @@ def _xmltv_url_epg_candidates(source: Source, limit: int = 800) -> list[dict]:
     try:
         from ..scrapers.tvapp2 import xmltv_epg_channel_candidates
         config = source.config or {}
-        if source.name == 'hdhomerun' and not (config.get('epg_url') or '').strip():
-            tvapp2 = Source.query.filter_by(name='tvapp2').first()
-            config = tvapp2.config or {} if tvapp2 else config
         rows = xmltv_epg_channel_candidates(config)
     except Exception:
         rows = []
@@ -306,7 +303,7 @@ def _xmltv_url_epg_candidates(source: Source, limit: int = 800) -> list[dict]:
 
 def _source_epg_candidates(source_id: int, now: datetime, limit: int = 400) -> list[dict]:
     source = db.session.get(Source, source_id)
-    if source and source.name in {'tvapp2', 'hdhomerun'}:
+    if source and source.name == 'hdhomerun':
         return _xmltv_url_epg_candidates(source, limit=max(limit, 5000))
 
     rows = (
@@ -824,14 +821,6 @@ def guide():
             ch.source_id,
             _source_epg_candidates(ch.source_id, now),
         )
-        if ch.source.name == 'tvapp2':
-            match_rows.append({
-                'channel': ch,
-                'matches': [],
-                'station_options': stations,
-                'manual_xmltv': True,
-            })
-            continue
         ranked = []
         for station in stations:
             if station['channel_id'] == ch.id:
@@ -1127,3 +1116,19 @@ def channel_changes_report():
 @admin_bp.route('/help')
 def help():
     return render_template('admin/help.html')
+
+
+@admin_bp.route('/epg-matcher')
+def epg_matcher():
+    """EPG channel matcher admin page for TVPass and HDHomeRun."""
+    # Pre-populate EPG URL from source config
+    epg_url = ''
+    for name in ('tvpass', 'hdhomerun'):
+        from ..models import Source
+        src = Source.query.filter_by(name=name).first()
+        if src and src.config:
+            url = (src.config.get('epg_url') or '').strip()
+            if url:
+                epg_url = url
+                break
+    return render_template('admin/epg_matcher.html', epg_url=epg_url)

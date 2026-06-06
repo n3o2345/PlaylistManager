@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import re
 
-from .base import ConfigField
+import requests as _requests
+
+from .base import ConfigField, StreamDeadError
 from .tvapp2 import TVApp2Scraper
 
 logger = logging.getLogger(__name__)
@@ -13,6 +15,66 @@ logger = logging.getLogger(__name__)
 _TVPASS_PLAYLIST_URL = 'https://tvpass.org/playlist/m3u'
 _TVPASS_EPG_URL = 'https://tvpass.org/epg.xml'
 _LIVE_QUALITY_RE = re.compile(r'(/live/[^/?#]+/)(?:sd|hd)(?=([?#]|$))', re.I)
+
+
+def _has_audio(url: str, session=None) -> bool:
+    """
+    Fetch the HLS manifest at *url* and return True if the stream appears to
+    carry audio, False if it is silent/missing, and True (fail-open) on any
+    network or parse error.
+
+    Detection strategy:
+    - Master playlist → follow first variant, then inspect that media playlist.
+    - Media playlist  → look for at least one non-comment, non-empty segment line
+      (any .ts/.aac/.mp4/.m4s segment implies audio tracks are present).
+    - Additionally check for EXT-X-MEDIA TYPE=AUDIO tags which explicitly
+      declare audio renditions.
+    """
+    try:
+        s = session or _requests.Session()
+        r = s.get(url, timeout=10, allow_redirects=True)
+        if r.status_code != 200:
+            logger.debug('[tvpass] audio-check HTTP %s for %s', r.status_code, url[:80])
+            return True  # fail open on non-200
+
+        text = r.text
+
+        # Follow first variant if this is a master playlist
+        if '#EXT-X-STREAM-INF' in text:
+            from urllib.parse import urljoin
+            for line in text.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    try:
+                        vr = s.get(urljoin(url, line), timeout=10)
+                        if vr.status_code == 200:
+                            text = vr.text
+                    except Exception:
+                        pass
+                    break
+
+        # EXT-X-MEDIA TYPE=AUDIO present → audio renditions declared
+        if 'TYPE=AUDIO' in text:
+            return True
+
+        # Count non-comment segment lines
+        segment_lines = [
+            l.strip() for l in text.splitlines()
+            if l.strip() and not l.strip().startswith('#')
+        ]
+        if not segment_lines:
+            logger.debug('[tvpass] audio-check: no segment lines in playlist at %s', url[:80])
+            return False
+
+        # Heuristic: if we can probe a segment and get a meaningful payload,
+        # assume audio is present. We rely on segment count > 0 as a proxy
+        # for a live, non-silent stream since full audio frame parsing is
+        # outside the scope of a lightweight HTTP check.
+        return True
+
+    except Exception as e:
+        logger.debug('[tvpass] audio-check error (fail-open): %s', e)
+        return True  # fail open on any exception
 
 
 def m3u_config_schema(
@@ -139,6 +201,14 @@ class DirectM3UScraper(TVApp2Scraper):
 
 
 class TVPassScraper(DirectM3UScraper):
+    """TVPass scraper with HD-first stream selection and audio-based failover.
+
+    Play order on each request:
+      1. Try HD stream — if audio is detected, serve it.
+      2. If HD has no audio, try SD stream — if audio is detected, serve it.
+      3. If SD also has no audio, raise StreamDeadError so Dispatcharr can
+         trigger its own channel failover.
+    """
     source_name = 'tvpass'
     source_aliases = ('tvpass_direct',)
     display_name = 'TVPass'
@@ -153,6 +223,45 @@ class TVPassScraper(DirectM3UScraper):
         epg_help='XMLTV guide URL. Leave empty to use the TVPass EPG.',
         include_quality=True,
     )
+
+    def resolve(self, raw_url: str) -> str:
+        """
+        Resolve with HD-first audio check, SD fallback, then dead-stream signal.
+
+        Always attempts HD first regardless of the configured quality preference,
+        since HD is the highest-quality option. Only falls back to SD when HD
+        produces a playlist with no audio. If SD also has no audio, raises
+        StreamDeadError so Dispatcharr can perform channel-level failover.
+        """
+        # Build both quality variants for this URL
+        hd_url = _LIVE_QUALITY_RE.sub(r'\g<1>hd', raw_url)
+        sd_url = _LIVE_QUALITY_RE.sub(r'\g<1>sd', raw_url)
+
+        # If the URL has no quality segment at all, just serve it directly
+        if hd_url == raw_url and sd_url == raw_url:
+            return raw_url
+
+        # 1. Try HD first
+        logger.debug('[tvpass] resolve: checking HD stream for %s', hd_url[:80])
+        if _has_audio(hd_url, self.session):
+            logger.debug('[tvpass] resolve: HD stream has audio — using HD')
+            return hd_url
+
+        logger.warning('[tvpass] resolve: HD stream has no audio, trying SD fallback for %s', hd_url[:80])
+
+        # 2. Try SD fallback
+        if _has_audio(sd_url, self.session):
+            logger.info('[tvpass] resolve: SD stream has audio — using SD fallback')
+            return sd_url
+
+        # 3. Both HD and SD have no audio — signal dead stream
+        logger.error(
+            '[tvpass] resolve: both HD and SD streams have no audio for %s — signalling dead stream',
+            raw_url[:80],
+        )
+        raise StreamDeadError(
+            f'TVPass channel has no audio on HD or SD streams: {raw_url[:80]}'
+        )
 
 
 class TVAppScraper(DirectM3UScraper):

@@ -146,14 +146,7 @@ class HDHomeRunScraper(BaseScraper):
         return quote((host or "").strip(), safe="")
 
     def _effective_epg_url(self) -> str:
-        if self._epg_url:
-            return self._epg_url
-        try:
-            from ..models import Source
-            tvapp2 = Source.query.filter_by(name="tvapp2").first()
-            return ((tvapp2.config or {}).get("epg_url") or "").strip() if tvapp2 else ""
-        except Exception:
-            return ""
+        return self._epg_url
 
     # ── Device discovery ──────────────────────────────────────────────────────
 
@@ -281,8 +274,9 @@ class HDHomeRunScraper(BaseScraper):
         if not epg_url:
             return []
         try:
-            from .tvapp2 import TVApp2Scraper
-            xmltv = TVApp2Scraper({"epg_url": epg_url})
+            from .tvpass import DirectM3UScraper
+            xmltv = DirectM3UScraper.__new__(DirectM3UScraper)
+            DirectM3UScraper.__init__(xmltv, {"epg_url": epg_url})
             xmltv._progress_cb = self._progress_cb
             return xmltv.fetch_epg(channels, **kwargs)
         except Exception as exc:

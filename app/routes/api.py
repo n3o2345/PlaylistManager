@@ -2253,3 +2253,249 @@ def localnow_cities():
         return jsonify(s.search_cities(q))
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
+
+
+# ── EPG Matcher API ────────────────────────────────────────────────────────────
+
+@api_bp.route('/epg-matcher/search')
+def epg_matcher_search():
+    """Typeahead: search XMLTV channels by name.
+
+    Query params:
+      q        - search query (required)
+      epg_url  - XMLTV source URL (defaults to first tvpass/hdhomerun source config)
+    """
+    q = request.args.get('q', '').strip()
+    epg_url = request.args.get('epg_url', '').strip()
+
+    if not epg_url:
+        epg_url = _default_epg_url()
+    if not epg_url:
+        return jsonify({'error': 'No EPG URL configured'}), 400
+    if not q or len(q) < 2:
+        return jsonify([])
+
+    try:
+        from ..epg_matcher import get_index
+        idx = get_index(epg_url)
+        if idx is None:
+            return jsonify({'error': 'Could not load XMLTV index'}), 503
+        results = idx.search(q, limit=15)
+        return jsonify([{
+            'xmltv_id':    ch.xmltv_id,
+            'callsign':    ch.callsign,
+            'network':     ch.network_name,
+            'names':       ch.display_names,
+            'icon_url':    ch.icon_url,
+        } for ch in results])
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@api_bp.route('/epg-matcher/auto-match', methods=['POST'])
+def epg_matcher_auto_match():
+    """Auto-match all unmatched channels for given sources.
+
+    Body JSON:
+      source_names  - list of source name strings (e.g. ["tvpass","hdhomerun"])
+      epg_url       - XMLTV source URL
+      dry_run       - bool, default false
+    """
+    data = request.get_json() or {}
+    source_names = data.get('source_names') or []
+    epg_url = (data.get('epg_url') or '').strip() or _default_epg_url()
+    dry_run = bool(data.get('dry_run', False))
+
+    if not source_names:
+        return jsonify({'error': 'source_names required'}), 400
+    if not epg_url:
+        return jsonify({'error': 'No EPG URL configured'}), 400
+
+    try:
+        from ..epg_matcher import run_auto_match
+        result = run_auto_match(source_names, epg_url, dry_run=dry_run)
+        if not dry_run:
+            _invalidate_and_refresh_xml()
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@api_bp.route('/epg-matcher/set-match', methods=['POST'])
+def epg_matcher_set_match():
+    """Manually assign an XMLTV channel ID to one or more Channel rows.
+
+    Body JSON:
+      channel_ids  - list[int]
+      xmltv_id     - str  (the XMLTV channel id= value, e.g. "35312")
+                     pass null/empty to clear the mapping
+    """
+    data = request.get_json() or {}
+    channel_ids = data.get('channel_ids') or []
+    xmltv_id = (data.get('xmltv_id') or '').strip() or None
+
+    if not channel_ids:
+        return jsonify({'error': 'channel_ids required'}), 400
+
+    updated = []
+    for cid in channel_ids:
+        ch = Channel.query.get(cid)
+        if not ch:
+            continue
+        ch.guide_key = xmltv_id
+        updated.append(ch.id)
+
+    db.session.commit()
+    _invalidate_and_refresh_xml()
+    return jsonify({'updated': updated, 'guide_key': xmltv_id})
+
+
+@api_bp.route('/epg-matcher/clear-matches', methods=['POST'])
+def epg_matcher_clear_matches():
+    """Clear guide_key for all channels of given sources (reset for re-matching).
+
+    Body JSON:
+      source_names - list of source name strings
+    """
+    data = request.get_json() or {}
+    source_names = data.get('source_names') or []
+    if not source_names:
+        return jsonify({'error': 'source_names required'}), 400
+
+    sources = Source.query.filter(Source.name.in_(source_names)).all()
+    source_ids = [s.id for s in sources]
+    channels = Channel.query.filter(Channel.source_id.in_(source_ids)).all()
+    cleared = 0
+    for ch in channels:
+        if ch.guide_key:
+            ch.guide_key = None
+            cleared += 1
+    db.session.commit()
+    _invalidate_and_refresh_xml()
+    return jsonify({'cleared': cleared})
+
+
+@api_bp.route('/epg-matcher/status')
+def epg_matcher_status():
+    """Return match coverage stats for tvpass and hdhomerun sources."""
+    epg_url = request.args.get('epg_url', '').strip() or _default_epg_url()
+
+    sources = Source.query.filter(
+        Source.name.in_(['tvpass', 'hdhomerun'])
+    ).all()
+
+    rows = []
+    for src in sources:
+        total = src.channels.filter_by(is_active=True).count()
+        matched = src.channels.filter(
+            Channel.is_active == True,
+            Channel.guide_key != None,
+            Channel.guide_key != '',
+        ).count()
+        rows.append({
+            'source_name':   src.name,
+            'display_name':  src.display_name,
+            'total':         total,
+            'matched':       matched,
+            'unmatched':     total - matched,
+        })
+
+    from ..epg_matcher import _index_fetched_at, _index_url, _EPG_CACHE_PATH
+    return jsonify({
+        'sources':        rows,
+        'epg_url':        epg_url,
+        'index_url':      _index_url,
+        'index_built_at': _index_fetched_at or None,
+        'cache_exists':   _EPG_CACHE_PATH.exists(),
+        'cache_size':     _EPG_CACHE_PATH.stat().st_size if _EPG_CACHE_PATH.exists() else 0,
+    })
+
+
+@api_bp.route('/epg-matcher/channel-list')
+def epg_matcher_channel_list():
+    """Return channel rows for tvpass/hdhomerun with their current guide_key,
+    plus auto-match suggestion if unmatched.
+
+    Query params:
+      source_names  - comma-separated source names (default: tvpass,hdhomerun)
+      epg_url       - XMLTV URL
+      filter        - all | matched | unmatched (default: all)
+    """
+    source_names = [s.strip() for s in
+                    request.args.get('source_names', 'tvpass,hdhomerun').split(',')
+                    if s.strip()]
+    epg_url = request.args.get('epg_url', '').strip() or _default_epg_url()
+    filt = request.args.get('filter', 'all')
+
+    sources = Source.query.filter(Source.name.in_(source_names)).all()
+    source_ids = [s.id for s in sources]
+
+    q = Channel.query.filter(
+        Channel.source_id.in_(source_ids),
+        Channel.is_active == True,
+    )
+    if filt == 'matched':
+        q = q.filter(Channel.guide_key != None, Channel.guide_key != '')
+    elif filt == 'unmatched':
+        q = q.filter(
+            (Channel.guide_key == None) | (Channel.guide_key == '')
+        )
+    channels = q.order_by(Channel.name).all()
+
+    # Load index for suggestions on unmatched
+    idx = None
+    if epg_url:
+        try:
+            from ..epg_matcher import get_index
+            idx = get_index(epg_url)
+        except Exception:
+            pass
+
+    # Build xmltv_id → info map for already-matched channels
+    matched_ids = {ch.guide_key for ch in channels if ch.guide_key}
+    xmltv_info: dict[str, dict] = {}
+    if idx:
+        for mid in matched_ids:
+            xch = idx.by_id(mid)
+            if xch:
+                xmltv_info[mid] = {
+                    'callsign': xch.callsign,
+                    'network': xch.network_name,
+                    'icon_url': xch.icon_url,
+                }
+
+    result = []
+    for ch in channels:
+        row = {
+            'channel_id':   ch.id,
+            'source_name':  ch.source.name if ch.source else '',
+            'name':         ch.name,
+            'logo_url':     ch.logo_url,
+            'guide_key':    ch.guide_key,
+            'xmltv_info':   xmltv_info.get(ch.guide_key) if ch.guide_key else None,
+            'suggestion':   None,
+        }
+        # Suggest top auto-match for unmatched channels
+        if not ch.guide_key and idx:
+            xch = idx.auto_match(ch.name)
+            if xch:
+                row['suggestion'] = {
+                    'xmltv_id': xch.xmltv_id,
+                    'callsign': xch.callsign,
+                    'network':  xch.network_name,
+                    'icon_url': xch.icon_url,
+                }
+        result.append(row)
+
+    return jsonify(result)
+
+
+def _default_epg_url() -> str:
+    """Derive a default EPG URL from tvpass or hdhomerun source config."""
+    for name in ('tvpass', 'hdhomerun'):
+        src = Source.query.filter_by(name=name).first()
+        if src and src.config:
+            url = (src.config.get('epg_url') or '').strip()
+            if url:
+                return url
+    return ''

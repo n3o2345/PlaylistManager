@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EPG Matcher - PlaylistManager</title>
+  <style>
+    html { font-size: 17px; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+    nav { background: var(--surface); padding: 1rem 2rem; display: flex; align-items: center; gap: 2rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    nav .version { margin-left: auto; color: var(--text-muted); font-size: 0.75rem; }
+    nav h1 { display: flex; align-items: center; padding: 0; margin: 0; }
+    nav a { color: var(--text-soft); text-decoration: none; font-size: 0.9rem; }
+    nav a:hover, nav a.active { color: var(--text); }
+    .container { max-width: 1400px; margin: 2rem auto; padding: 0 2rem; }
+    .page-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .page-header h2 { font-size: 1.15rem; font-weight: 650; }
+    .subtitle { color: var(--text-muted); font-size: 0.86rem; margin-top: 0.25rem; }
+    .btn {
+      border: 1px solid var(--border); background: var(--surface-2); color: var(--text-soft);
+      padding: 0.45rem 0.85rem; border-radius: 6px; cursor: pointer; font-size: 0.84rem;
+      font-weight: 650; text-decoration: none; display: inline-flex; align-items: center;
+      gap: 0.4rem; min-height: 34px;
+    }
+    .btn:hover { color: var(--text); border-color: var(--text-muted); }
+    .btn-primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
+    .btn-primary:hover { background: var(--accent-strong-hover, #0056b3); color: #fff; }
+    .btn-danger  { background: var(--danger-soft, #dc3545); border-color: var(--danger-soft, #dc3545); color: #fff; }
+    .btn-success { background: var(--success-soft, #198754); border-color: var(--success-soft, #198754); color: #fff; }
+    .btn-sm { font-size: 0.78rem; padding: 0.28rem 0.6rem; min-height: 26px; }
+    .epg-url-bar { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .epg-url-bar label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); font-weight: 700; white-space: nowrap; }
+    .epg-url-bar input { flex: 1; min-width: 280px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.7rem; border-radius: 6px; font-size: 0.86rem; }
+    .coverage-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .coverage-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.85rem 1.25rem; min-width: 160px; text-align: center; }
+    .coverage-card .src-name { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); font-weight: 700; }
+    .coverage-card .big-num { font-size: 1.5rem; font-weight: 750; color: var(--accent, #0d6efd); }
+    .coverage-card .sub { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.1rem; }
+    .progress-bar-wrap { background: var(--surface-3, #e5e5e5); border-radius: 4px; height: 4px; margin-top: 0.5rem; }
+    .progress-bar-fill { background: var(--accent, #0d6efd); height: 4px; border-radius: 4px; }
+    .filter-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+    .seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .seg label { padding: 0.3rem 0.75rem; font-size: 0.82rem; cursor: pointer; background: var(--surface); color: var(--text-soft); border-right: 1px solid var(--border); }
+    .seg label:last-child { border-right: none; }
+    .seg input[type=radio] { display: none; }
+    .seg input[type=radio]:checked + label { background: var(--accent-strong, #0d6efd); color: #fff; }
+    .filter-bar .name-search { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.35rem 0.7rem; border-radius: 6px; font-size: 0.85rem; width: 220px; }
+    .row-count { margin-left: auto; color: var(--text-muted); font-size: 0.8rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    thead th { background: var(--surface-2, #2a2a2a); color: var(--text-soft); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.07em; padding: 0.5rem 0.75rem; position: sticky; top: 0; z-index: 10; }
+    tbody tr { border-bottom: 1px solid var(--border); }
+    tbody tr:hover { background: var(--surface-hover, rgba(255,255,255,0.03)); }
+    td { padding: 0.45rem 0.75rem; vertical-align: middle; }
+    .badge { display: inline-block; font-size: 0.72rem; font-weight: 700; padding: 0.18rem 0.45rem; border-radius: 4px; }
+    .badge-src { background: var(--surface-3, #333); color: var(--text-muted); }
+    .badge-matched { background: rgba(25,135,84,0.15); color: #198754; }
+    .matched-id { font-family: monospace; font-size: 0.8rem; color: var(--accent, #0d6efd); }
+    .network-name { color: var(--text-muted); font-size: 0.78rem; }
+    .suggestion-row { display: flex; align-items: center; gap: 0.4rem; }
+    .suggestion-row img { height: 18px; border-radius: 2px; }
+    .ch-search-wrap { position: relative; }
+    .ch-search-wrap input { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.82rem; width: 100%; }
+    .ch-dropdown { position: absolute; top: 100%; left: 0; z-index: 200; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; min-width: 280px; max-height: 200px; overflow-y: auto; display: none; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+    .ch-dropdown.open { display: block; }
+    .ch-dropdown a { display: block; padding: 0.45rem 0.75rem; color: var(--text); text-decoration: none; font-size: 0.82rem; border-bottom: 1px solid var(--border); }
+    .ch-dropdown a:hover { background: var(--surface-2); }
+    .ch-dropdown a img { height: 16px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+    .ch-dropdown .dim { color: var(--text-muted); font-size: 0.76rem; }
+    .bulk-bar { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem 1.25rem; display: none; align-items: center; gap: 1rem; box-shadow: 0 6px 24px rgba(0,0,0,0.4); z-index: 500; flex-wrap: wrap; }
+    .bulk-bar.visible { display: flex; }
+    .bulk-bar .bulk-search-wrap { position: relative; }
+    .bulk-bar .bulk-search-wrap input { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.35rem 0.7rem; border-radius: 6px; font-size: 0.84rem; width: 240px; }
+    .toast-container { position: fixed; top: 1rem; right: 1rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.5rem; }
+    .toast { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem 1rem; font-size: 0.85rem; min-width: 240px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+    .toast.success { border-left: 3px solid #198754; }
+    .toast.error   { border-left: 3px solid #dc3545; }
+    .toast.warn    { border-left: 3px solid #ffc107; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--text-muted); border-top-color: var(--accent, #0d6efd); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 820px) {
+      nav { padding: 0.9rem 1rem; gap: 0.75rem 1rem; }
+      .container { margin: 1rem auto; padding: 0 1rem 1.5rem; }
+    }
+  </style>
+  {% include 'admin/_theme_head.html' %}
+</head>
+<body>
+  {% include 'admin/_update_modal.html' %}
+  <nav>
+    <h1><a href="/admin/" style="display:flex;align-items:center;text-decoration:none;"><img src="{{ url_for('static', filename='playlistmanager_logo.svg') }}" alt="PlaylistManager" style="height:36px;width:auto;object-fit:contain;"></a></h1>
+    <a href="/admin/">Dashboard</a>
+    <a href="/admin/sources">Sources</a>
+    <a href="/admin/channels">Channels</a>
+    <a href="/admin/guide">Guide</a>
+    <a href="/admin/epg-matcher" class="active">EPG Matcher</a>
+    <a href="/admin/feeds">Feeds</a>
+    <a href="/admin/settings">Settings</a>
+    <a href="/admin/logs">Logs</a>
+    <a href="/admin/help">Help</a>
+    {% include 'admin/_theme_toggle.html' %}
+    {% if update_status.update_available %}<span class="version" style="cursor:pointer" onclick="openUpdateModal()" title="Update available: v{{ update_status.latest_version }}">v{{ app_version }}<span class="update-pip"></span></span>{% else %}<a class="version" href="{{ update_status.latest_url or 'https://github.com/kineticman/PlaylistManagerv2' }}" target="_blank" rel="noopener noreferrer" title="View PlaylistManager on GitHub">v{{ app_version }}</a>{% endif %}
+  </nav>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <div class="container">
+    <div class="page-header">
+      <div>
+        <h2>EPG Channel Matcher</h2>
+        <div class="subtitle">Map TVPass &amp; HDHomeRun channels to your XMLTV guide. Auto-match by name or assign manually.</div>
+      </div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <button class="btn btn-sm" id="btn-refresh">↻ Refresh</button>
+        <button class="btn btn-sm btn-primary" id="btn-auto-match">⚡ Auto-Match Unmatched</button>
+        <button class="btn btn-sm btn-danger" id="btn-clear-all">✕ Clear All</button>
+      </div>
+    </div>
+
+    {# EPG URL bar #}
+    <div class="epg-url-bar">
+      <label>XMLTV EPG URL</label>
+      <input type="url" id="epg-url" placeholder="https://example.com/epg.xml"
+             value="{{ epg_url or '' }}">
+      <button class="btn btn-sm btn-primary" id="btn-load">⬇ Load Index</button>
+      <span id="index-status" style="font-size:0.78rem;color:var(--text-muted)"></span>
+    </div>
+
+    {# Coverage stats #}
+    <div class="coverage-row" id="coverage-row">
+      <div class="coverage-card" style="color:var(--text-muted)">Loading…</div>
+    </div>
+
+    {# Filter bar #}
+    <div class="filter-bar">
+      <div class="seg">
+        <input type="radio" name="filt" id="f-all" value="all" checked><label for="f-all">All</label>
+        <input type="radio" name="filt" id="f-matched" value="matched"><label for="f-matched">Matched</label>
+        <input type="radio" name="filt" id="f-unmatched" value="unmatched"><label for="f-unmatched">Unmatched</label>
+      </div>
+      <input type="search" class="name-search" id="name-search" placeholder="Filter channel name…">
+      <span class="row-count" id="row-count"></span>
+    </div>
+
+    {# Channel table #}
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px"><input type="checkbox" id="select-all"></th>
+            <th>Source</th>
+            <th>Channel</th>
+            <th>Current Match</th>
+            <th>Suggestion</th>
+            <th style="width:220px">Manual Search</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted)">
+            <span class="spinner"></span> Loading…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# Bulk action bar #}
+  <div class="bulk-bar" id="bulk-bar">
+    <span style="font-weight:700" id="bulk-count">0 selected</span>
+    <div class="bulk-search-wrap">
+      <input type="text" id="bulk-search" placeholder="Search XMLTV to assign…" autocomplete="off">
+      <div class="ch-dropdown" id="bulk-dropdown"></div>
+    </div>
+    <button class="btn btn-sm btn-danger" id="bulk-clear-btn">✕ Clear match</button>
+    <button class="btn btn-sm" id="bulk-deselect">Deselect all</button>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+  const API = '/api';
+  let epgUrl = document.getElementById('epg-url').value.trim();
+  let allRows = [];
+  let selectedIds = new Set();
+
+  // ── Toast ─────────────────────────────────────────────────────────────────
+  function toast(msg, type='success') {
+    const c = document.getElementById('toast-container');
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = msg;
+    c.appendChild(el);
+    setTimeout(() => el.remove(), 3500);
+  }
+
+  function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Status ────────────────────────────────────────────────────────────────
+  async function loadStatus() {
+    epgUrl = document.getElementById('epg-url').value.trim();
+    try {
+      const res = await fetch(`${API}/epg-matcher/status?epg_url=${encodeURIComponent(epgUrl)}`);
+      if (!res.ok) return;
+      const d = await res.json();
+      const row = document.getElementById('coverage-row');
+      row.innerHTML = d.sources.map(s => {
+        const pct = s.total ? Math.round(s.matched/s.total*100) : 0;
+        return `<div class="coverage-card">
+          <div class="src-name">${esc(s.display_name)}</div>
+          <div class="big-num">${s.matched}</div>
+          <div class="sub">${s.matched} / ${s.total} matched</div>
+          <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+        </div>`;
+      }).join('');
+      if (d.index_built_at) {
+        const ago = Math.round((Date.now()/1000 - d.index_built_at) / 60);
+        const sz = d.cache_size ? (d.cache_size/1024/1024).toFixed(1)+'MB' : '?';
+        document.getElementById('index-status').textContent = `Index: ${sz} · refreshed ${ago}m ago`;
+      }
+    } catch(e) {}
+  }
+
+  // ── Channel list ──────────────────────────────────────────────────────────
+  async function loadChannels() {
+    epgUrl = document.getElementById('epg-url').value.trim();
+    const filt = document.querySelector('input[name="filt"]:checked')?.value || 'all';
+    const params = new URLSearchParams({ source_names:'tvpass,hdhomerun', epg_url:epgUrl, filter:filt });
+    const tbody = document.getElementById('tbody');
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted)"><span class="spinner"></span> Loading…</td></tr>`;
+    try {
+      const res = await fetch(`${API}/epg-matcher/channel-list?${params}`);
+      if (!res.ok) throw new Error(res.status);
+      allRows = await res.json();
+    } catch(e) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:#dc3545">Failed to load channels</td></tr>`;
+      return;
+    }
+    renderTable();
+    loadStatus();
+  }
+
+  function renderTable() {
+    const nameQ = document.getElementById('name-search').value.trim().toLowerCase();
+    const filtered = nameQ ? allRows.filter(r => r.name.toLowerCase().includes(nameQ)) : allRows;
+    document.getElementById('row-count').textContent = `${filtered.length} channels`;
+    const tbody = document.getElementById('tbody');
+    if (!filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted)">No channels</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = filtered.map(r => {
+      const matchedHtml = r.guide_key
+        ? `<span class="matched-id">${esc(r.guide_key)}</span>
+           <span class="network-name ms-1">${esc(r.xmltv_info?.callsign||'')} ${esc(r.xmltv_info?.network||'')}</span>
+           <button class="btn btn-sm" style="margin-left:0.5rem;color:#dc3545;border-color:#dc3545;" data-clear="${r.channel_id}">✕</button>`
+        : `<span style="color:var(--text-muted);font-size:0.8rem">—</span>`;
+
+      let suggHtml = `<span style="color:var(--text-muted);font-size:0.8rem">—</span>`;
+      if (r.suggestion && !r.guide_key) {
+        const s = r.suggestion;
+        suggHtml = `<div class="suggestion-row">
+          ${s.icon_url ? `<img src="${esc(s.icon_url)}" alt="">` : ''}
+          <span>${esc(s.callsign)} <span class="network-name">${esc(s.network)}</span></span>
+          <button class="btn btn-sm btn-success" data-accept="${r.channel_id}" data-xid="${esc(s.xmltv_id)}"
+                  title="Accept: ${esc(s.xmltv_id)}">✓</button>
+        </div>`;
+      }
+
+      const checked = selectedIds.has(r.channel_id) ? 'checked' : '';
+      return `<tr data-chid="${r.channel_id}">
+        <td><input type="checkbox" class="row-check" data-chid="${r.channel_id}" ${checked}></td>
+        <td><span class="badge badge-src">${esc(r.source_name)}</span></td>
+        <td style="max-width:220px">
+          ${r.logo_url ? `<img src="${esc(r.logo_url)}" style="height:20px;width:32px;object-fit:contain;border-radius:2px;margin-right:6px;vertical-align:middle">` : ''}
+          <span style="font-weight:600">${esc(r.name)}</span>
+        </td>
+        <td>${matchedHtml}</td>
+        <td>${suggHtml}</td>
+        <td>
+          <div class="ch-search-wrap">
+            <input type="text" class="ch-search-input" placeholder="Search XMLTV…" autocomplete="off" data-chid="${r.channel_id}">
+            <div class="ch-dropdown" data-chid="${r.channel_id}"></div>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    // Bind events
+    tbody.querySelectorAll('[data-clear]').forEach(btn => {
+      btn.addEventListener('click', () => applyMatch([parseInt(btn.dataset.clear)], null));
+    });
+    tbody.querySelectorAll('[data-accept]').forEach(btn => {
+      btn.addEventListener('click', () => applyMatch([parseInt(btn.dataset.accept)], btn.dataset.xid));
+    });
+    tbody.querySelectorAll('.ch-search-input').forEach(inp => {
+      inp.addEventListener('input', debounce(() => rowSearch(inp), 280));
+      inp.addEventListener('focus', () => { if (inp.value.length >= 2) rowSearch(inp); });
+    });
+    tbody.querySelectorAll('.row-check').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const id = parseInt(cb.dataset.chid);
+        if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+        updateBulkBar();
+      });
+    });
+  }
+
+  // ── Row XMLTV search ──────────────────────────────────────────────────────
+  async function rowSearch(inp) {
+    const q = inp.value.trim();
+    const chId = inp.dataset.chid;
+    const dd = document.querySelector(`.ch-dropdown[data-chid="${chId}"]`);
+    if (!dd) return;
+    if (q.length < 2) { dd.classList.remove('open'); return; }
+    epgUrl = document.getElementById('epg-url').value.trim();
+    try {
+      const res = await fetch(`${API}/epg-matcher/search?q=${encodeURIComponent(q)}&epg_url=${encodeURIComponent(epgUrl)}`);
+      const items = await res.json();
+      dd.innerHTML = items.length
+        ? items.map(x => `<a href="#" data-xid="${esc(x.xmltv_id)}">
+            ${x.icon_url ? `<img src="${esc(x.icon_url)}" alt="">` : ''}
+            <strong>${esc(x.callsign)}</strong>
+            <span class="dim">${esc(x.network)}</span>
+            <span class="dim" style="margin-left:auto">${esc(x.xmltv_id)}</span>
+          </a>`).join('')
+        : `<a href="#" style="pointer-events:none;color:var(--text-muted)">No results</a>`;
+      dd.classList.add('open');
+      dd.querySelectorAll('[data-xid]').forEach(a => {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          applyMatch([parseInt(chId)], a.dataset.xid);
+          dd.classList.remove('open');
+          inp.value = '';
+        });
+      });
+    } catch(e) {}
+  }
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.ch-search-wrap') && !e.target.closest('.bulk-search-wrap')) {
+      document.querySelectorAll('.ch-dropdown.open').forEach(d => d.classList.remove('open'));
+      document.getElementById('bulk-dropdown').classList.remove('open');
+    }
+  });
+
+  // ── Apply match ───────────────────────────────────────────────────────────
+  async function applyMatch(channelIds, xmltvId) {
+    const res = await fetch(`${API}/epg-matcher/set-match`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel_ids: channelIds, xmltv_id: xmltvId }),
+    });
+    if (!res.ok) { toast('Update failed', 'error'); return; }
+    toast(xmltvId
+      ? `Matched ${channelIds.length} channel(s) → ${xmltvId}`
+      : `Cleared ${channelIds.length} channel(s)`);
+    selectedIds.clear();
+    updateBulkBar();
+    loadChannels();
+  }
+
+  // ── Auto-match ────────────────────────────────────────────────────────────
+  document.getElementById('btn-auto-match').addEventListener('click', async () => {
+    epgUrl = document.getElementById('epg-url').value.trim();
+    if (!epgUrl) { toast('Set an EPG URL first', 'warn'); return; }
+    const btn = document.getElementById('btn-auto-match');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Matching…';
+    try {
+      const res = await fetch(`${API}/epg-matcher/auto-match`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_names: ['tvpass','hdhomerun'], epg_url: epgUrl }),
+      });
+      const d = await res.json();
+      if (d.error) { toast(d.error, 'error'); return; }
+      toast(`Matched ${d.matched} · skipped ${d.skipped} · already set ${d.already_set}`);
+      loadChannels();
+    } finally {
+      btn.disabled = false; btn.innerHTML = '⚡ Auto-Match Unmatched';
+    }
+  });
+
+  // ── Clear all ─────────────────────────────────────────────────────────────
+  document.getElementById('btn-clear-all').addEventListener('click', async () => {
+    if (!confirm('Clear all EPG matches for TVPass and HDHomeRun?')) return;
+    const res = await fetch(`${API}/epg-matcher/clear-matches`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_names: ['tvpass','hdhomerun'] }),
+    });
+    const d = await res.json();
+    toast(`Cleared ${d.cleared} channel(s)`);
+    loadChannels();
+  });
+
+  // ── Load index ────────────────────────────────────────────────────────────
+  document.getElementById('btn-load').addEventListener('click', async () => {
+    epgUrl = document.getElementById('epg-url').value.trim();
+    if (!epgUrl) { toast('Enter an EPG URL first', 'warn'); return; }
+    const btn = document.getElementById('btn-load');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+    // Trigger index build via dry-run auto-match
+    try {
+      await fetch(`${API}/epg-matcher/auto-match`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_names:['tvpass','hdhomerun'], epg_url: epgUrl, dry_run: true }),
+      });
+      toast('Index loaded from ' + epgUrl);
+      loadChannels();
+    } catch(e) {
+      toast('Failed to load index', 'error');
+    } finally {
+      btn.disabled = false; btn.innerHTML = '⬇ Load Index';
+    }
+  });
+
+  // ── Bulk bar ──────────────────────────────────────────────────────────────
+  function updateBulkBar() {
+    const bar = document.getElementById('bulk-bar');
+    if (selectedIds.size > 0) {
+      bar.classList.add('visible');
+      document.getElementById('bulk-count').textContent = `${selectedIds.size} selected`;
+    } else {
+      bar.classList.remove('visible');
+    }
+  }
+
+  document.getElementById('bulk-clear-btn').addEventListener('click', () => {
+    if (!selectedIds.size) return;
+    applyMatch([...selectedIds], null);
+  });
+
+  document.getElementById('bulk-deselect').addEventListener('click', () => {
+    selectedIds.clear();
+    document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+    updateBulkBar();
+  });
+
+  document.getElementById('select-all').addEventListener('change', e => {
+    document.querySelectorAll('.row-check').forEach(cb => {
+      cb.checked = e.target.checked;
+      const id = parseInt(cb.dataset.chid);
+      if (e.target.checked) selectedIds.add(id); else selectedIds.delete(id);
+    });
+    updateBulkBar();
+  });
+
+  // Bulk XMLTV search
+  const bulkInp = document.getElementById('bulk-search');
+  const bulkDd  = document.getElementById('bulk-dropdown');
+  bulkInp.addEventListener('input', debounce(async () => {
+    const q = bulkInp.value.trim();
+    if (q.length < 2) { bulkDd.classList.remove('open'); return; }
+    epgUrl = document.getElementById('epg-url').value.trim();
+    const res = await fetch(`${API}/epg-matcher/search?q=${encodeURIComponent(q)}&epg_url=${encodeURIComponent(epgUrl)}`);
+    const items = await res.json();
+    bulkDd.innerHTML = items.map(x => `<a href="#" data-xid="${esc(x.xmltv_id)}">
+      ${x.icon_url ? `<img src="${esc(x.icon_url)}" alt="">` : ''}
+      <strong>${esc(x.callsign)}</strong> <span class="dim">${esc(x.network)}</span>
+      <span class="dim" style="float:right">${esc(x.xmltv_id)}</span>
+    </a>`).join('') || `<a href="#" style="pointer-events:none;color:var(--text-muted)">No results</a>`;
+    bulkDd.classList.add('open');
+    bulkDd.querySelectorAll('[data-xid]').forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        applyMatch([...selectedIds], a.dataset.xid);
+        bulkDd.classList.remove('open');
+        bulkInp.value = '';
+      });
+    });
+  }, 280));
+
+  // ── Controls ──────────────────────────────────────────────────────────────
+  document.getElementById('btn-refresh').addEventListener('click', loadChannels);
+  document.querySelectorAll('input[name="filt"]').forEach(r => r.addEventListener('change', loadChannels));
+  document.getElementById('name-search').addEventListener('input', debounce(() => renderTable(), 180));
+
+  function debounce(fn, ms) {
+    let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  loadChannels();
+})();
+</script>
+</body>
+</html>
