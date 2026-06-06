@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import re
 
-import requests as _requests
 
 from .base import ConfigField, StreamDeadError
 from .m3u_utils import M3UScraper
@@ -19,62 +18,37 @@ _LIVE_QUALITY_RE = re.compile(r'(/live/[^/?#]+/)(?:sd|hd)(?=([?#]|$))', re.I)
 
 def _has_audio(url: str, session=None) -> bool:
     """
-    Fetch the HLS manifest at *url* and return True if the stream appears to
-    carry audio, False if it is silent/missing, and True (fail-open) on any
-    network or parse error.
+    Use ffprobe to check whether the stream at *url* has at least one audio
+    track. Returns True (fail-open) on any probe error so a transient network
+    hiccup does not incorrectly kill a healthy stream.
 
-    Detection strategy:
-    - Master playlist → follow first variant, then inspect that media playlist.
-    - Media playlist  → look for at least one non-comment, non-empty segment line
-      (any .ts/.aac/.mp4/.m4s segment implies audio tracks are present).
-    - Additionally check for EXT-X-MEDIA TYPE=AUDIO tags which explicitly
-      declare audio renditions.
+    The HLS manifest inspection approach cannot detect muted streams — TVPass's
+    subscribe wall serves perfectly valid HLS segments with no audio codec,
+    which only ffprobe can reliably detect.
     """
+    import subprocess
+    import json as _json
     try:
-        s = session or _requests.Session()
-        r = s.get(url, timeout=10, allow_redirects=True)
-        if r.status_code != 200:
-            logger.debug('[tvpass] audio-check HTTP %s for %s', r.status_code, url[:80])
-            return True  # fail open on non-200
-
-        text = r.text
-
-        # Follow first variant if this is a master playlist
-        if '#EXT-X-STREAM-INF' in text:
-            from urllib.parse import urljoin
-            for line in text.splitlines():
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    try:
-                        vr = s.get(urljoin(url, line), timeout=10)
-                        if vr.status_code == 200:
-                            text = vr.text
-                    except Exception:
-                        pass
-                    break
-
-        # EXT-X-MEDIA TYPE=AUDIO present → audio renditions declared
-        if 'TYPE=AUDIO' in text:
-            return True
-
-        # Count non-comment segment lines
-        segment_lines = [
-            l.strip() for l in text.splitlines()
-            if l.strip() and not l.strip().startswith('#')
-        ]
-        if not segment_lines:
-            logger.debug('[tvpass] audio-check: no segment lines in playlist at %s', url[:80])
-            return False
-
-        # Heuristic: if we can probe a segment and get a meaningful payload,
-        # assume audio is present. We rely on segment count > 0 as a proxy
-        # for a live, non-silent stream since full audio frame parsing is
-        # outside the scope of a lightweight HTTP check.
-        return True
-
+        result = subprocess.run(
+            [
+                'ffprobe', '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_streams',
+                '-timeout', '8000000',  # 8s in libavformat microseconds
+                url,
+            ],
+            capture_output=True,
+            timeout=12,
+        )
+        data = _json.loads(result.stdout)
+        streams = data.get('streams', [])
+        has = any(s.get('codec_type') == 'audio' for s in streams)
+        if not has:
+            logger.warning('[tvpass] audio-check: no audio track at %s', url[:80])
+        return has
     except Exception as e:
         logger.debug('[tvpass] audio-check error (fail-open): %s', e)
-        return True  # fail open on any exception
+        return True  # fail open — do not penalise on probe errors
 
 
 def m3u_config_schema(
