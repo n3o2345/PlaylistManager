@@ -264,38 +264,6 @@ class TVPassScraper(DirectM3UScraper):
         )
 
 
-class TVAppScraper(DirectM3UScraper):
-    source_name = 'tvapp'
-    source_aliases = ('thetvapp', 'thetvapp_direct')
-    display_name = 'TheTVApp'
-    default_playlist_url = 'https://thetvapp-m3u.data-search.workers.dev/playlist'
-    default_epg_url = ''
-    enable_quality = True
-
-    config_schema = m3u_config_schema(
-        default_playlist_url,
-        default_epg_url,
-        playlist_help='M3U playlist URL for TheTVApp. Defaults to the public generated TheTVApp playlist.',
-        epg_help='Optional XMLTV guide URL for TheTVApp. Leave empty to scrape channels only.',
-        include_quality=True,
-    )
-
-
-class MoveOnJoyScraper(DirectM3UScraper):
-    source_name = 'moj'
-    source_aliases = ('moveonjoy',)
-    display_name = 'MoveOnJoy'
-    default_playlist_url = 'https://raw.githubusercontent.com/iptv-org/iptv/refs/heads/master/streams/us_moveonjoy.m3u'
-    default_epg_url = ''
-
-    config_schema = m3u_config_schema(
-        default_playlist_url,
-        default_epg_url,
-        playlist_help='M3U playlist URL for MoveOnJoy. Defaults to the iptv-org MoveOnJoy source playlist.',
-        epg_help='Optional XMLTV guide URL for MoveOnJoy. Leave empty to scrape channels only.',
-    )
-
-
 class DaddyLiveScraper(DirectM3UScraper):
     source_name = 'daddylive'
     source_aliases = ('daddy_live', 'dlhd')
