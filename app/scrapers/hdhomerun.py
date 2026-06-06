@@ -110,8 +110,7 @@ class HDHomeRunScraper(BaseScraper):
             required=False,
             placeholder="https://example.com/xmltv.xml.gz",
             help_text=(
-                "Optional XMLTV feed for guide data. You can use the same XMLTV "
-                "URL configured on TVApp2; channels are matched by guide number, "
+                "Optional XMLTV feed for guide data. Channels are matched by guide number, "
                 "channel name, and XMLTV aliases."
             ),
         ),

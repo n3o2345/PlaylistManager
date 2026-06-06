@@ -267,7 +267,7 @@ def _score_guide_station(channel_name: str, station: dict) -> int:
 
 def _xmltv_url_epg_candidates(source: Source, limit: int = 800) -> list[dict]:
     try:
-        from ..scrapers.tvapp2 import xmltv_epg_channel_candidates
+        from ..scrapers.m3u_utils import xmltv_epg_channel_candidates
         config = source.config or {}
         rows = xmltv_epg_channel_candidates(config)
     except Exception:
@@ -428,11 +428,13 @@ def sources():
             return 'configured' if is_source_config_complete(source.name, cls, source.config or {}) else 'required'
         return 'configured' if has_meaningful_source_config(cls, source.config or {}) else 'optional'
 
-    sources_list = Source.query.order_by(Source.display_name).all()
+    sources_list = [
+        s for s in Source.query.order_by(Source.display_name).all()
+        if s.name in all_scrapers
+    ]
     source_config_status = {
         s.id: _config_status(s, all_scrapers[s.name])
         for s in sources_list
-        if s.name in all_scrapers
     }
     needs_config = [
         s for s in sources_list

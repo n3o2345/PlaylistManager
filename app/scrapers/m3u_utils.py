@@ -1,9 +1,5 @@
-# app/scrapers/tvapp2.py
-"""Shared M3U and XMLTV helpers for direct playlist sources.
-
-NOTE: The tvapp2 source (local proxy at 127.0.0.1:4124) is no longer supported.
-This module is retained as a utility base for M3U/XMLTV parsing used by other scrapers.
-"""
+# app/scrapers/m3u_utils.py
+"""Shared M3U and XMLTV helpers for direct playlist sources."""
 from __future__ import annotations
 
 import gzip
@@ -44,13 +40,12 @@ def _extract_tvguide_id(value: str) -> str | None:
 
     Handles numeric IDs like "10179.206ESPN" and generated PlaylistManager
     channel IDs like "sourcename.10179.206ESPN.sourcename.sports".
-    Also handles legacy tvapp2-prefixed IDs for backward compatibility.
     """
     if not value:
         return None
     parts = [part.strip() for part in value.split('.') if part.strip()]
-    # Strip known source-name prefixes (tvapp2 kept for backward compat)
-    if parts and parts[0].casefold() in ('tvapp2', 'tvpass', 'tvapp'):
+    # Strip known source-name prefixes
+    if parts and parts[0].casefold() in ('tvpass', 'tvapp'):
         parts = parts[1:]
     for part in parts:
         if part.isdigit() and len(part) >= 4:
@@ -144,7 +139,7 @@ def _xmltv_match_key(value: str | None) -> str:
     raw = re.sub(r'[^a-zA-Z0-9]+', ' ', raw).casefold()
     words = [
         part for part in raw.split()
-        if part not in {'channel', 'tv', 'network', 'hd', 'uhd', '4k', 'live', 'tvapp', 'tvpass'}
+        if part not in {'channel', 'tv', 'network', 'hd', 'uhd', '4k', 'live', 'tvpass'}
         and not part.isdigit()
     ]
     compact = ''.join(words)
@@ -179,7 +174,7 @@ def _parse_xmltv_content(content: bytes) -> ET.Element:
 
 def xmltv_epg_channel_candidates(config: dict | None, scraper_cls=None) -> list[dict]:
     """Return guide candidates directly from a configured XMLTV URL."""
-    scraper_cls = scraper_cls or TVApp2Scraper
+    scraper_cls = scraper_cls or M3UScraper
     scraper = scraper_cls(config or {})
     epg_getter = getattr(scraper, '_epg_url', None)
     epg_url = (epg_getter() if callable(epg_getter) else scraper.config.get('epg_url') or '').strip()
@@ -242,16 +237,11 @@ def _normalise_group(group: Optional[str]) -> Optional[str]:
 
 # ── Scraper ───────────────────────────────────────────────────────────────────
 
-class TVApp2Scraper(BaseScraper):
-    """Base class providing M3U and XMLTV parsing utilities for direct playlist sources.
-
-    The original tvapp2 local-proxy source (127.0.0.1:4124) has been removed.
-    This class now serves only as a shared parser base for TVPassScraper, HDHomeRunScraper,
-    and other direct-M3U sources.
-    """
+class M3UScraper(BaseScraper):
+    """Base class providing M3U and XMLTV parsing utilities for direct playlist sources."""
 
     source_name          = None
-    display_name         = 'M3U/XMLTV Parser Base'
+    display_name         = 'M3U/XMLTV Parser'
     scrape_interval      = 360
     config_required      = False
     stream_audit_enabled = True

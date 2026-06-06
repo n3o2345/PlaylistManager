@@ -206,7 +206,7 @@
               <div class="match-item">
                 <div>
                   <div class="match-title">XMLTV channel</div>
-                  <div class="match-detail">Select the exact guide channel to use for this TVApp2 channel.</div>
+                  <div class="match-detail">Select the exact guide channel to use for this channel.</div>
                 </div>
                 <div class="xmltv-picker">
                   <select id="xmltv-select-{{ row.channel.id }}">
@@ -222,7 +222,7 @@
                 </div>
               </div>
               {% else %}
-              <div class="empty" style="padding:1.5rem;">No XMLTV channels are available. Check the TVApp2 EPG URL and run a scrape.</div>
+              <div class="empty" style="padding:1.5rem;">No XMLTV channels are available. Check the source EPG URL and run a scrape.</div>
               {% endif %}
             {% elif row.matches %}
               {% for m in row.matches %}

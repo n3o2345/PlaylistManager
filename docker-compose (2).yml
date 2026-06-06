@@ -8,10 +8,6 @@ services:
     volumes:
       - db_data:/data
     environment:
-      # ── Embedded tvapp2 daemon ──────────────────────────────────────────────
-      TVAPP2_ENABLED: 1
-      TVAPP2_STREAM_QUALITY: hd
-      TVAPP2_LOG_LEVEL: 2
 
       # ── Pluto X11 screen-grab ───────────────────────────────────────────────
       # Set PLUTO_X11_ENABLED=0 to disable and fall back to HLS proxy.

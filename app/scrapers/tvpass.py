@@ -8,7 +8,7 @@ import re
 import requests as _requests
 
 from .base import ConfigField, StreamDeadError
-from .tvapp2 import TVApp2Scraper
+from .m3u_utils import M3UScraper
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ def m3u_config_schema(
     return schema
 
 
-class DirectM3UScraper(TVApp2Scraper):
+class DirectM3UScraper(M3UScraper):
     """Fetch channels from a standalone M3U playlist and optional XMLTV URL."""
 
     source_name = None
